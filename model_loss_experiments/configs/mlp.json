@@ -1,0 +1,29 @@
+{
+  "model": "mlp",
+  "losses": ["mse", "mae", "huber", "relative_mae", "relative_mse", "log_cosh"],
+  "models": {
+    "mlp": {
+      "hidden_sizes": [256, 128],
+      "activation": "relu",
+      "dropout": 0.1,
+      "batch_norm": false
+    }
+  },
+  "training": {
+    "epochs": 100,
+    "batch_size": 256,
+    "learning_rate": 0.001,
+    "weight_decay": 0.00001,
+    "validation_ratio": 0.15,
+    "patience": 12,
+    "min_delta": 0.000001,
+    "gradient_clip": 5.0,
+    "log_every": 1,
+    "device": "auto",
+    "seed": 108
+  },
+  "loss": {
+    "relative_floor": 0.001,
+    "huber_delta": 1.0
+  }
+}

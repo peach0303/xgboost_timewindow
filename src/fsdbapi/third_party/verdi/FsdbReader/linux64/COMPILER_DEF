@@ -1,0 +1,12 @@
+CC = /depot/qsc/QSCO/GCC/bin/gcc
+CC_LINKER = /depot/qsc/QSCO/GCC/bin/gcc
+CXX = /depot/qsc/QSCO/GCC/bin/g++
+CXX_LINKER = /depot/qsc/QSCO/GCC/bin/g++
+LOAD_LIBS = -lXss -lXft -lXt -lXmu -lX11 -lXext -lfontconfig -lm -lnsl -liberty -lnuma -lpthread -lrt -ldl -Wl,-E -lpng -Wl,-relax
+FSDB_LINKER_OUT = -o
+FSDB_TARGET = -o $@
+EXTRA_CXXFLAGS = -DPPORT_LINUX -DPORT_LINUXAMD64 -DSVR4 -D_GLIBCXX_USE_CXX11_ABI=0 -DSVR4 -DNOVAS_OEM -D_REENTRANT -fPIC -DFSDBCOPYRIGHT -DVERDISIMDBLICKEY
+POLY_OBJ = .o
+POLY_LIB = .a
+EXE_EXT =
+PORT_LIB_SEARCH =

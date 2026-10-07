@@ -1,0 +1,568 @@
+\chapter{数据集提取脚本}
+
+本附录按照 \code{scripts/csv_reduction/run_fsdb_pipeline.csh} 的实际处理顺序，说明数据集提取过程中调用的 C++ 可执行程序、Python 脚本及内联处理。
+
+
+\section{fsdb\_to\_tog\_cache}
+
+\textbf{功能描述：}\code{fsdb_to_tog_cache} 用于读取 RTL 仿真生成的 FSDB 波形，将选定信号展开为位级列，并导出模型使用的初始电平数据与逐周期翻转信息。总控脚本通过 \code{fsdb_list} 逐项处理测试用例，每一项包含用例名称、FSDB 路径以及采样起止 tag。处理时先从首个测试用例导出可支持信号名，再按层次结构字符串筛选并生成 \code{<HW>_signal_filter.txt}。
+
+数据转换阶段以测试用例为粒度顺序调用 \code{fsdb_to_tog_cache}。每个测试用例单独生成缓存目录和日志，并将成功用例的 \code{tog_cache_manifest.json} 加入后续合并列表。程序固定采用 \code{sample-xor} 方式计算相邻采样点的翻转信息，同时保存测量窗口起点的初始电平向量，后续可由“初始电平加逐周期翻转”恢复完整 Level 序列。
+
+导出过程中，若某个位级线网在测量窗口的采样点上出现真实 FSDB X/Z，该列会从当前用例的输出矩阵中剔除，并记录到 manifest 的 \code{removed_xz_names} 字段；未落在采样点上的瞬态 X/Z 不触发剔除，NC 保持前值，NV或无值按0处理。
+
+\textbf{示例命令：}
+
+\textbf{1. 导出并筛选信号线网：}
+\begin{lstlisting}
+${TOOLS_ROOT}/fsdbapi/build/fsdb_to_tog_cache \
+  --fsdb /data/coremark_1.fsdb \
+  --list-signals work/all_signals.txt
+
+# 按配置字符串筛选, 并只保留第一列信号名
+grep "gemmini.tile." work/all_signals.txt | \
+  awk '{print $1}' > work/gemmini_signal_filter.txt
+\end{lstlisting}
+
+
+
+\textbf{2. 数据提取与格式转换：}
+\begin{lstlisting}
+${TOOLS_ROOT}/fsdbapi/build/fsdb_to_tog_cache \
+  --fsdb /data/coremark_1.fsdb \
+  --output-dir work/cache_gemmini/coremark_1 \
+  --dataset-name coremark_1 \
+  --signal-list work/gemmini_signal_filter.txt \
+  --step 2 --start 0 --end 50000 --end-inclusive \
+  --raw-col-block 20000 \
+  --tog-mode sample-xor --drop-first-tog-row \
+  --max-cycles-per-file 1000
+\end{lstlisting}
+
+上述 \code{start}、\code{end} 和 \code{step} 均为 FSDB tag，实际物理时间由波形文件的 timescale 决定。
+
+\textbf{参数列表：}
+
+\textbf{导出信号名参数：}
+\begin{longtable}{L{0.27\textwidth}L{0.14\textwidth}L{0.46\textwidth}}
+\toprule 参数 & 必需性 & 说明 \\ \midrule
+\code{--fsdb} & 必需 & 用于枚举信号的 RTL FSDB；总控流程使用 \code{fsdb_list} 中的首个测试用例。 \\
+\code{--list-signals} & 必需 & 支持信号列表输出路径；设置后程序只枚举信号并退出。 \\
+\code{SIGNAL_PREFIX} & 可选 & 总控脚本使用的信号匹配字符串；可配置一个或多个值，留空时跳过信号筛选。 \\
+\bottomrule
+\end{longtable}
+
+\textbf{数据提取转换参数：}
+\begin{longtable}{L{0.30\textwidth}L{0.14\textwidth}L{0.43\textwidth}}
+\toprule 参数 & 必需性 & 说明 \\ \midrule
+\code{--fsdb}、\code{--output-dir} & 必需 & 当前测试用例的 FSDB 路径与独立缓存输出目录。 \\
+\code{--dataset-name} & 必需 & 由 \code{fsdb_list} 第一列确定的 \code{cache_id}。 \\
+\code{--signal-list} & 条件使用 & \code{SIGNAL_PREFIX} 非空时传入筛选后的信号名文件；未筛选时不设置。 \\
+\code{--step} & 必需 & 由 \code{STEP} 设置采样间隔，单位为 FSDB tag，且必须大于0。 \\
+\code{--start}、\code{--end} & 必需 & 从当前 \code{fsdb_list} 条目读取测量窗口。 \\
+\code{--end-inclusive} & 条件使用 & \code{END_INCL} 为1时设置，用于包含 \code{end} 采样点。 \\
+\code{--raw-col-block} & 必需 & 由 \code{RAW_COL} 指定程序内部一次处理的原始列规模。 \\
+\code{--tog-mode} & 固定 & 当前总控脚本固定使用 \code{sample-xor}。 \\
+\code{--drop-first-tog-row} & 条件使用 & \code{DROP_FIRST} 为1时设置，用于删除首个翻转行。 \\
+\code{--max-cycles-per-file} & 必需 & 限制单个 NPZ 文件保存的最大周期数；0表示不主动按周期数分片。 \\
+\bottomrule
+\end{longtable}
+
+\textbf{输入输出件：}
+\begin{longtable}{L{0.32\textwidth}L{0.13\textwidth}L{0.43\textwidth}}
+\toprule 描述 & 类型 & 作用 \\ \midrule
+RTL仿真波形 \code{*.fsdb} & 输入 & 提供信号层次、初始状态及测量窗口内的值变化。 \\
+\code{fsdb_list} & 配置输入 & 定义用例名称、FSDB 路径和采样起止 tag。 \\
+\code{all_signals.txt} & 可选中间输出 & 设置 \code{SIGNAL_PREFIX} 时，保存首个 FSDB 中枚举出的全部支持信号。 \\
+\code{<HW>_signal_filter.txt} & 可选中间输入 & 保存匹配 \code{SIGNAL_PREFIX} 的信号名，并作为 \code{--signal-list}。 \\
+TOG稀疏矩阵 \code{*.npz} & 输出 & 保存所选线网的逐采样周期翻转特征，采用CSC稀疏格式并可按行分片。 \\
+初始Level \code{*.npy} & 输出 & 保存各保留列在测量窗口起点的初始电平，用于恢复Level序列。 \\
+\code{tog_cache_manifest.json} & 输出 & 记录矩阵形状、分片路径、列名、X/Z剔除结果、采样范围和缓存模式。 \\
+\code{removed_xz_names} & 输出字段 & 记录在采样点上出现真实X/Z并被剔除的位级线网。 \\
+\code{<cache_id>.log} & 输出 & 保存当前测试用例的标准输出和错误信息；转换失败时应首先检查该日志。 \\
+\bottomrule
+\end{longtable}
+
+\textbf{内存开销与限制分析：}当前总控脚本为每个测试用例启动一次 \code{fsdb_to_tog_cache}，不创建独立的列块作业。\code{RAW_COL} 通过 \code{--raw-col-block} 控制程序内部一次处理的原始列规模，\code{MAX_CYCLES_PER_FILE} 通过 \code{--max-cycles-per-file} 控制输出 NPZ 的行分片规模。峰值内存主要由当前处理列的信号状态、采样结果、CSC索引和值数组以及NPZ压缩缓冲构成，程序本身没有硬性内存预算参数。
+
+建议先使用一个实际测试用例验证信号筛选结果和采样区间，再处理完整 \code{fsdb_list}。当设计列数较大时，应优先减小 \code{RAW_COL}；当测量窗口较长时，应适当减小 \code{MAX_CYCLES_PER_FILE}，避免单个 NPZ 文件过大。当前脚本按测试用例顺序执行，各用例完成后由后续 \code{merge_tog_cache_manifests.py} 沿样本方向合并缓存。
+
+
+\section{fsdb\_to\_power\_label 与 TSV 转 NPY过程}
+
+\textbf{功能描述：}功耗标签提取过程先调用 \code{fsdb_to_power_label}，按照统一的 \code{STEP} 导出功耗 TSV 和 JSON 元数据；随后直接执行内联 Python，读取 TSV 的 \code{power} 列，并保存为形状 $[N,1]$、数据类型为 \code{float32} 的 NPY 标签。\code{DROP_FIRST} 为1且功耗记录数大于1时，内联程序删除首个采样值。
+
+\textbf{示例命令：}
+
+\textbf{1. POWER\_BIN 导出功耗 TSV：}
+\begin{lstlisting}
+${TOOLS_ROOT}/fsdbapi/build/fsdb_to_power_label \
+  --fsdb /data/power/coremark_1.fsdb \
+  --power-signal top.chip.power \
+  --output-tsv output/gemmini_power/coremark_1.power.tsv \
+  --output-meta output/gemmini_power/coremark_1.power.meta.json \
+  --step 2 --start 0 --end 50000
+\end{lstlisting}
+
+当功耗信号名未知时，可在独立调试阶段枚举候选数值信号：
+\begin{lstlisting}
+${TOOLS_ROOT}/fsdbapi/build/fsdb_to_power_label \
+  --fsdb /data/power/coremark_1.fsdb \
+  --list-signals work/power_numeric_signals.txt
+\end{lstlisting}
+
+\textbf{2. 内联 TSV 转 NPY 程序：}
+\begin{lstlisting}[language=Python]
+import numpy as np, csv
+with open('${POWER_DIR}/${cache_id}.power.tsv') as f:
+    vals = [float(r['power']) for r in csv.DictReader(f, delimiter='\t')]
+if ${DROP_FIRST} == 1 and len(vals) > 1:
+    vals = vals[1:]
+np.save('${POWER_DIR}/${cache_id}.npy', np.array(vals, dtype='float32').reshape(-1,1))
+print(f'power: {len(vals)} rows -> ${cache_id}.npy')
+\end{lstlisting}
+
+该程序直接内联在 \code{run_fsdb_pipeline.csh} 的功耗用例循环中，无需保存为独立 Python 文件。独立调试时，应先将其中的 C Shell 变量替换为实际路径和值。
+
+
+\textbf{功耗用例与 POWER\_BIN 参数：}
+\begin{longtable}{L{0.29\textwidth}L{0.14\textwidth}L{0.44\textwidth}}
+\toprule 参数 & 必需性 & 说明 \\ \midrule
+\code{power_list} & 可选 & 功耗用例列表；留空时跳过整个功耗标签提取步骤。 \\
+\code{cache_id} & 列表项必需 & 用例标识，须与 \code{fsdb_list} 中的名称匹配。 \\
+\code{power_fsdb} & 列表项必需 & 当前用例的 PTPX 功耗 FSDB 路径。 \\
+\code{power_signal} & 列表项必需 & 目标数值功耗信号的完整层次名。 \\
+\code{--output-tsv} & 必需 & 功耗序列 TSV 输出路径。 \\
+\code{--output-meta} & 必需 & 采样设置和记录数的 JSON 元数据输出路径。 \\
+\code{--step} & 必需 & 由全局 \code{STEP} 设置采样间隔，单位为 FSDB tag。 \\
+\code{--start}、\code{--end} & 必需 & 按 \code{cache_id} 从 \code{fsdb_list} 中取得的采样起止 tag。 \\
+\code{--list-signals} & 独立调试可选 & 枚举候选数值信号并退出；当前总控流程不调用。 \\
+\bottomrule
+\end{longtable}
+
+\textbf{内联 TSV 转 NPY 参数：}
+\begin{longtable}{L{0.28\textwidth}L{0.14\textwidth}L{0.45\textwidth}}
+\toprule 变量或字段 & 必需性 & 说明 \\ \midrule
+\code{POWER_DIR} & 必需 & TSV、JSON 元数据和 NPY 标签所在目录。 \\
+\code{cache_id} & 必需 & 用例标识，决定输入、输出文件名。 \\
+\code{DROP_FIRST} & 必需 & 为1且记录数大于1时删除首个采样值。 \\
+TSV字段 \code{power} & 必需 & 转换为浮点标签的字段。 \\
+输出类型与形状 & 固定 & \code{float32}，形状为 $[N,1]$。 \\
+\bottomrule
+\end{longtable}
+
+\textbf{输入输出件：}
+\begin{longtable}{L{0.33\textwidth}L{0.13\textwidth}L{0.42\textwidth}}
+\toprule 描述 & 类型 & 作用 \\ \midrule
+\code{power_list} & 配置输入 & 定义用例标识、功耗 FSDB 路径和功耗信号名。 \\
+PTPX功耗波形 \code{*.fsdb} & 输入 & 提供目标功耗信号的时间序列。 \\
+\code{fsdb_list} 中的测量窗口与 \code{STEP} & 配置输入 & 确定当前功耗用例的采样范围和采样间隔。 \\
+\code{power_numeric_signals.txt} & 可选中间输出 & 独立枚举信号时保存候选数值信号；总控流程不生成。 \\
+\code{<cache_id>.power.tsv} & 中间输出/输入 & 保存原始功耗序列，并作为内联 Python 的输入。 \\
+\code{<cache_id>.power.meta.json} & 输出 & 记录功耗信号、采样范围、间隔和记录数。 \\
+\code{<cache_id>.npy} & 输出 & 模型使用的二维 \code{float32} 功耗标签。 \\
+终端输出 & 运行信息 & 显示功耗提取失败、NPY 保存结果及最终标签行数。 \\
+\bottomrule
+\end{longtable}
+
+\textbf{内存开销与限制分析：}功耗标签的列维度远小于特征矩阵，\code{fsdb_to_power_label} 和内联 TSV 转 NPY 程序需要处理的数据规模也相对有限。相对于 512~GB 的设备内存，其内存开销很小，因此设备内存不会成为该脚本的主要限制。当前总控脚本按 \code{power_list} 中的用例顺序执行功耗提取，各用例输出到统一的 \code{<HW>_power} 目录，并通过 \code{cache_id} 区分文件。
+
+
+\section{merge\_tog\_cache\_manifests.py}
+
+\textbf{功能描述：}特征转换完成后，若存在多个成功用例，则调用 \code{merge_tog_cache_manifests.py}，按照 \code{fsdb_list} 中成功用例的顺序沿样本行方向合并缓存，并在 \code{MERGED_DIR/_work} 下生成统一的 \code{tog_cache_manifest.json}。合并过程中需要检查各输入 manifest 的列块布局和列定义是否兼容，并对不同用例中剔除的 X/Z 列取并集。
+
+\textbf{示例命令：}
+\begin{lstlisting}
+python3 ${TOOLS_ROOT}/fsdbapi/merge_tog_cache_manifests.py \
+  --output-dir output/gemmini_cache \
+  --manifest work/cache_gemmini/coremark_1/_work/tog_cache_manifest.json \
+  --manifest work/cache_gemmini/coremark_2/_work/tog_cache_manifest.json
+\end{lstlisting}
+
+\textbf{参数列表：}
+\begin{longtable}{L{0.28\textwidth}L{0.16\textwidth}L{0.44\textwidth}}
+\toprule 参数 & 必需性 & 说明 \\ \midrule
+\code{--manifest} & 必需，可重复 & 成功用例的缓存 manifest；总控脚本按用例顺序重复添加该参数。 \\
+\code{--output-dir} & 必需 & 合并缓存输出目录，即 \code{MERGED_DIR}。 \\
+\code{--max-mem} & 当前未设置 & 程序采用默认合并内存预算。 \\
+\code{--merge-mem-frac} & 当前未设置 & 程序采用默认的单次合并内存比例。 \\
+\code{--max-cycles-per-file} & 当前未设置 & 程序根据默认策略决定是否进行行分片。 \\
+\bottomrule
+\end{longtable}
+
+\textbf{输入输出件：}
+\begin{longtable}{L{0.34\textwidth}L{0.13\textwidth}L{0.41\textwidth}}
+\toprule 描述 & 类型 & 作用 \\ \midrule
+各用例 \code{tog_cache_manifest.json} & 输入 & 定义各测试用例的TOG分片、初始Level、列名、行数及X/Z清理信息。 \\
+各用例TOG NPZ与初始Level NPY & 输入 & 提供待纵向拼接的稀疏特征和Level恢复起点。 \\
+合并后的TOG NPZ分片 & 输出 & 按输入用例顺序保存全局样本矩阵。 \\
+块级检查点和元数据 & 中间输出 & 支持程序内部逐块合并及断点复用。 \\
+\code{MERGED_DIR/_work/tog_cache_manifest.json} & 输出 & 供后续降维程序读取的统一缓存入口。 \\
+终端输出 & 运行信息 & 打印合并进度和最终 manifest 路径；失败时总控脚本立即退出。 \\
+\bottomrule
+\end{longtable}
+
+\textbf{内存开销与限制分析：}脚本逐列块读取多个用例的稀疏矩阵，并沿样本行方向进行拼接，合并粒度与 A.1 中 \code{fsdb_to_tog_cache} 的原始信号分块粒度直接相关。峰值内存主要由当前列块的输入矩阵、拼接临时对象和压缩保存缓冲组成；列块包含的原始信号越多、合并后的周期数越大，所需内存通常越高。
+
+根据现有数据的运行经验，合并约5000个原始信号、19万周期的数据时，峰值内存约为110~GB。其他数据规模可参照该结果，结合原始信号数量、展开后的位级列数、周期数和矩阵稀疏度估算内存需求。若设备内存无法容纳当前合并任务，应减小 A.1 中的 \code{RAW_COL}，以降低单个列块包含的原始信号数量和合并峰值内存；修改后需重新执行特征缓存导出，再进行多用例合并。当前总控脚本未显式传入 \code{--max-mem}、\code{--merge-mem-frac} 和 \code{--max-cycles-per-file}，因此使用程序默认值。
+
+
+\section{dimentionality\_reduction\_csv.py}
+
+\textbf{功能描述：}总控脚本使用合并后的 \code{tog_cache_manifest.json} 作为输入，调用 \code{dimentionality_reduction_csv.py} 完成无效信息剔除，并同时输出采用相同列选择的 Level 与 TOG 特征。当前流程以TOG数据统计列状态，清理X/Z无效列和全0列；对于全1列只保留一列代表列。相同的保留列索引随后应用到由“初始Level加TOG”恢复的Level数据，以保证两类特征列严格对应。
+
+脚本保存X/Z清理后、全1列处理后和最终阶段的数据。\code{--disable-sim-reduce} 明确关闭相似列处理，\code{--force-row-shard-save} 则要求阶段矩阵按行分片输出。
+
+\textbf{示例命令：}
+\begin{lstlisting}
+python3 -u ${TOOLS_ROOT}/dimentionality_reduction_csv.py \
+  --input-cache-manifest output/gemmini_cache/_work/tog_cache_manifest.json \
+  --output-dir output/gemmini_reduced \
+  --output-meta output/gemmini_reduced/meta.json \
+  --output-cols output/gemmini_reduced/final_cols.txt \
+  --output-original-headers output/gemmini_reduced/original_headers.txt \
+  --max-mem 180GB \
+  --target-cols 500000 \
+  --cache-format csc \
+  --save-after-xz-clean \
+  --save-after-one \
+  --save-final \
+  --disable-sim-reduce \
+  --duplicate-mode hash-only \
+  --input-data-type level \
+  --force-row-shard-save \
+  --snapshot-row-block-rows 1000
+\end{lstlisting}
+
+\textbf{参数列表：}
+\begin{longtable}{L{0.31\textwidth}L{0.14\textwidth}L{0.43\textwidth}}
+\toprule 参数 & 必需性 & 说明 \\ \midrule
+\code{--input-cache-manifest} & 必需 & 合并后的 \code{MERGED_DIR/_work/tog_cache_manifest.json}。 \\
+\code{--output-dir} & 必需 & 降维结果根目录，即 \code{REDUCE_DIR}。 \\
+\code{--output-meta} & 必需 & 全流程统计信息和处理结果JSON。 \\
+\code{--output-cols} & 必需 & 最终保留列名的配置输出路径。 \\
+\code{--output-original-headers} & 必需 & 原始展开列名输出路径。 \\
+\code{--max-mem} & 必需 & 由 \code{MAX_MEM} 设置内存预算，当前示例为180~GB。 \\
+\code{--target-cols} & 必需 & 由 \code{TARGET_COLS} 设置目标列数提示。 \\
+\code{--cache-format} & 固定 & 当前流程使用CSC格式读取和统计列。 \\
+\code{--save-after-xz-clean} & 固定设置 & 保存X/Z清理后的阶段矩阵。 \\
+\code{--save-after-one} & 固定设置 & 保存全0列剔除及全1列合并后的阶段矩阵。 \\
+\code{--save-final} & 固定设置 & 保存最终阶段矩阵。 \\
+\code{--disable-sim-reduce} & 固定设置 & 关闭相似列降维。 \\
+\code{--duplicate-mode hash-only} & 固定设置 & 设置程序内部对应处理模式，具体算法不在本文展开。 \\
+\code{--input-data-type level} & 固定设置 & 同时生成Level与TOG输出，并对两类数据应用相同列选择。 \\
+\code{--force-row-shard-save} & 固定设置 & 强制将阶段结果按样本行分片保存。 \\
+\code{--snapshot-row-block-rows} & 必需 & 由 \code{MAX_CYCLES_PER_FILE} 设置每个快照分片的最大周期数。 \\
+\bottomrule
+\end{longtable}
+
+\textbf{输入输出件：}
+\begin{longtable}{L{0.34\textwidth}L{0.13\textwidth}L{0.41\textwidth}}
+\toprule 描述 & 类型 & 作用 \\ \midrule
+合并后的 \code{tog_cache_manifest.json} & 输入 & 提供TOG分片、初始Level文件、列名和样本映射。 \\
+TOG NPZ与初始Level NPY & 输入 & 用于统计有效列并恢复完整Level序列。 \\
+\code{level/}目录 & 输出 & 保存各阶段的Level稀疏矩阵、分片manifest和列名。 \\
+\code{tog/}目录 & 输出 & 保存各阶段的TOG稀疏矩阵、分片manifest和列名。 \\
+\code{after_xz_clean}阶段 & 输出 & 保存X/Z无效列清理后的特征。 \\
+\code{after_one}阶段 & 输出 & 保存全0列剔除并仅保留一列全1列后的特征。 \\
+\code{final}阶段 & 输出 & 保存当前配置下的最终特征矩阵。 \\
+\code{meta.json} & 输出 & 记录各阶段列数、清理数量、输入类型和处理耗时。 \\
+最终列名与原始表头文件 & 输出 & 记录模型输入列及其与原始信号的对应关系。 \\
+\code{reduction.log} & 输出 & 由总控脚本通过 \code{tee} 保存降维进度和异常信息。 \\
+\bottomrule
+\end{longtable}
+
+\textbf{内存开销与限制分析：}降维阶段的主要内存开销来自稀疏矩阵读取、逐列统计、Level恢复、CSC/CSR格式转换以及阶段快照保存。当前总控脚本将 \code{MAX_MEM} 设置为180~GB，并通过 \code{--force-row-shard-save} 和 \code{--snapshot-row-block-rows} 控制快照规模。在512~GB内存设备上，该配置为运行时临时对象和系统开销保留了额外空间，但 \code{--max-mem} 属于程序预算而非操作系统级硬限制，稀疏格式转换和压缩保存仍可能产生短时额外开销。建议根据实际矩阵列数和稀疏度观察 \code{reduction.log}，必要时减小快照行数。
+
+
+\chapter{代理筛选脚本}
+
+本附录按照 \code{cmd/run_timewindow_pipeline.csh} 中实际调用顺序，介绍代理筛选流程的关键脚本。
+
+
+
+\section{step1\_make\_global\_sample\_index.py}
+
+\textbf{功能描述：}\code{step1_make_global_sample_index.py} 读取 Level、TOG 和功耗标签目录，取得三者共有的测试用例，划分训练用例与测试用例，并在统一有效边界内生成逐用例采样索引。全部偏移和数据类型组合复用同一份索引，从而保证不同组合具有一致的标签样本集合和样本顺序。
+
+\textbf{示例命令：}
+\begin{lstlisting}
+${PYTHON} src/timewindow/step1_make_global_sample_index.py \
+  --level-dir reduced/level \
+  --tog-dir reduced/tog \
+  --label-dir power \
+  --output-dir run/step1_shifted/sample_index \
+  --offsets 12,11,10,9,8,7,6 \
+  --boundary-discard 12 \
+  --test-count 1 \
+  --stage after_one \
+  --sample-rows-total 0 \
+  --sample-rows-per-file 0 \
+  --sample-bins 20 \
+  --sample-min-per-bin 1 \
+  --sample-min-per-case 1 \
+  --sample-test-ratio -1 \
+  --sample-seed 108
+\end{lstlisting}
+
+\textbf{参数列表：}
+\begin{longtable}{L{0.31\textwidth}L{0.14\textwidth}L{0.42\textwidth}}
+\toprule 参数 & 必需性 & 说明 \\ \midrule
+\code{--level-dir}、\code{--tog-dir} & 必需 & Level与TOG阶段矩阵目录。 \\
+\code{--label-dir}、\code{--output-dir} & 必需 & 功耗标签目录和采样索引输出目录。 \\
+\code{--offsets} & 可选 & 逗号分隔的偏移列表，默认12至6。 \\
+\code{--boundary-discard} & 可选 & 首尾边界丢弃行数；未设置时取最大偏移。 \\
+\code{--test-count} & 可选 & 从共有用例末尾划入测试集的用例数量，默认1。 \\
+\code{--stage} & 可选 & 读取的特征阶段名，默认 \code{after_one}。 \\
+\code{--sample-rows-total} & 可选 & 训练集全局采样上限；0表示不设置上限。 \\
+\code{--sample-rows-per-file} & 可选 & 单个用例采样上限；0表示保留全部有效行。 \\
+\code{--sample-bins} & 可选 & 功耗标签分位数分箱数量，默认20。 \\
+\code{--sample-min-per-bin}、\code{--sample-min-per-case} & 可选 & 每个非空功耗区间及每个用例的最低采样保障。 \\
+\code{--sample-test-ratio} & 可选 & 测试集采样比例；负数表示沿用训练集采样规则。 \\
+\code{--sample-seed} & 可选 & 采样随机种子，默认108。 \\
+\bottomrule
+\end{longtable}
+
+\textbf{输入输出件：}
+\begin{longtable}{L{0.34\textwidth}L{0.13\textwidth}L{0.41\textwidth}}
+\toprule 描述 & 类型 & 作用 \\ \midrule
+Level、TOG阶段矩阵或分片manifest & 输入 & 确定各用例可用的特征行数。 \\
+\code{<stem>.npy}功耗标签 & 输入 & 确定有效标签范围并执行功耗分层采样。 \\
+\code{sample_index_manifest.json} & 输出 & 记录训练/测试划分、采样设置及逐用例索引路径。 \\
+\code{train_stems.txt}、\code{test_stems.txt} & 输出 & 保存互斥的训练与测试用例列表。 \\
+逐用例索引NPY & 输出 & 保存后续时间窗口构造使用的统一标签行索引。 \\
+\code{complete/failed/status} & 调度输出 & 标识索引作业是否成功完成。 \\
+\bottomrule
+\end{longtable}
+
+\textbf{内存开销与限制分析：}程序需要读取当前用例的标签并保存候选位置、分箱结果和最终索引，内存主要随标签行数线性增长，通常远小于特征矩阵处理开销，因此该脚本无需内存限制条件。
+
+
+\section{step1\_prepare\_timewindow.py}
+
+\textbf{功能描述：}\code{step1_prepare_timewindow.py} 根据采样索引，按测试用例、偏移和数据类型构造时间窗口训练数据。对于标签行 $i$ 和偏移 $k$，TOG特征取行 $i-k$，Level特征取行 $i+1-k$。在默认并行模式下，总控脚本为每个“用例与组合”生成一个独立任务，调用程序时通过 \code{--include-stems}、单一 \code{--offsets} 和单一 \code{--data-types} 限定处理范围；所有局部 manifest 完成后，再由总控脚本统一合并。
+
+\textbf{示例命令：}
+\begin{lstlisting}
+${PYTHON} src/timewindow/step1_prepare_timewindow.py \
+  --level-dir reduced/level \
+  --tog-dir reduced/tog \
+  --label-dir power \
+  --output-dir run/step1_shifted/_parts/coremark_1/tog_offset12 \
+  --offsets 12 \
+  --data-types tog \
+  --boundary-discard 12 \
+  --test-count 1 \
+  --stage after_one \
+  --sample-rows-per-file 0 \
+  --sample-bins 20 \
+  --sample-min-per-bin 1 \
+  --sample-seed 108 \
+  --jobs 1 \
+  --include-stems coremark_1 \
+  --sample-index-manifest run/step1_shifted/sample_index/sample_index_manifest.json \
+  --compress-output 0 \
+  --skip-existing 1
+\end{lstlisting}
+
+\textbf{参数列表：}
+\begin{longtable}{L{0.31\textwidth}L{0.14\textwidth}L{0.42\textwidth}}
+\toprule 参数 & 必需性 & 说明 \\ \midrule
+\code{--level-dir}、\code{--tog-dir}、\code{--label-dir} & 必需 & 输入Level、TOG和功耗标签目录。 \\
+\code{--output-dir} & 必需 & 当前任务的组合数据输出目录。 \\
+\code{--offsets}、\code{--data-types} & 可选 & 偏移列表及 \code{tog,level} 数据类型列表。 \\
+\code{--boundary-discard}、\code{--test-count}、\code{--stage} & 可选 & 边界丢弃量、测试用例数和输入阶段名。 \\
+\code{--sample-index-manifest} & 建议设置 & 全局采样索引manifest；总控并行流程固定传入。 \\
+\code{--include-stems} & 可选 & 仅处理指定的逗号分隔用例；总控并行流程每次传入一个用例。 \\
+\code{--sample-rows-per-file}、\code{--sample-bins}、\code{--sample-min-per-bin}、\code{--sample-seed} & 可选 & 未使用全局索引时的本地采样参数。 \\
+\code{--jobs} & 可选 & 程序内部组合并行数；拆分调度任务中固定为1。 \\
+\code{--compress-output} & 可选 & 是否压缩NPZ；0降低保存时间和部分临时开销，1减少磁盘占用。 \\
+\code{--skip-existing} & 可选 & 是否复用已存在的特征和标签文件，使用0/1表示。 \\
+\bottomrule
+\end{longtable}
+
+\textbf{输入输出件：}
+\begin{longtable}{L{0.34\textwidth}L{0.13\textwidth}L{0.41\textwidth}}
+\toprule 描述 & 类型 & 作用 \\ \midrule
+Level或TOG阶段矩阵 & 输入 & 提供当前用例与数据类型的原始特征。 \\
+功耗标签NPY & 输入 & 提供当前用例的监督标签。 \\
+\code{sample_index_manifest.json}及索引NPY & 输入 & 统一各组合使用的标签样本位置和顺序。 \\
+\code{<stem>.feature.npz} & 输出 & 保存当前组合的时间对齐稀疏特征。 \\
+\code{<stem>.label.npy} & 输出 & 保存与特征逐行对应的功耗标签。 \\
+训练/测试filelist & 输出 & 记录当前组合的训练与测试文件。 \\
+局部及全局\code{timewindow_manifest.json} & 输出 & 记录组合、偏移、数据类型、矩阵形状和文件路径。 \\
+\bottomrule
+\end{longtable}
+
+\textbf{内存开销与限制分析：}单任务峰值至少包括当前用例的源稀疏矩阵、采样索引切片、输出组合矩阵和保存缓冲。\code{--jobs} 大于1时，多个组合会并发加载数据，峰值内存近似按工作进程数增加；默认拆分调度将每个任务的 \code{--jobs} 固定为1。关闭输出压缩可减少压缩缓冲和运行时间，但会增加磁盘占用。脚本没有硬性内存上限，超大用例应通过调度资源限制并控制同时运行的任务数。
+
+
+\section{step2\_mcp\_per\_offset.py}
+
+\textbf{功能描述：}\code{step2_mcp_per_offset.py} 是步骤2的默认代理筛选程序。脚本从步骤1 manifest 读取指定组合的训练和测试特征，使用MCP筛选代理列，并通过Ridge回归对所选代理进行初步评价；当MCP求解不可用或未得到有效代理时，程序使用内部回退策略生成候选列。默认并行模式下，总控脚本为每个组合提交一个任务，完成后将局部 manifest 合并为 \code{step2_mcp/mcp_per_offset_manifest.json}。
+
+\textbf{示例命令：}
+\begin{lstlisting}
+${PYTHON} src/timewindow/step2_mcp_per_offset.py \
+  --manifest run/step1_shifted/timewindow_manifest.json \
+  --namefile reduced/level/after_one.namefile.txt \
+  --alpha 50 \
+  --gamma 3 \
+  --alpha-l2 8 \
+  --batch 4 \
+  --jobs 1 \
+  --include-combos tog_offset12 \
+  --output-dir run/step2_mcp/_parts/tog_offset12
+\end{lstlisting}
+
+\textbf{参数列表：}
+\begin{longtable}{L{0.29\textwidth}L{0.14\textwidth}L{0.44\textwidth}}
+\toprule 参数 & 必需性 & 说明 \\ \midrule
+\code{--manifest} & 必需 & 步骤1生成的 \code{timewindow_manifest.json}。 \\
+\code{--output-dir} & 必需 & 当前组合或完整步骤2结果的输出目录。 \\
+\code{--namefile} & 可选 & 原始特征名文件，用于输出可追溯的代理名称。 \\
+\code{--alpha}、\code{--gamma} & 可选 & MCP正则强度和凹度参数，默认50和3。 \\
+\code{--alpha-l2} & 可选 & Ridge初评使用的L2正则强度，默认8。 \\
+\code{--batch} & 可选 & 每批拼接的训练文件数量，默认4。 \\
+\code{--top-k} & 可选 & 回退策略的代理数量，程序默认200；当前总控命令未显式设置。 \\
+\code{--jobs} & 可选 & 组合内部并行数；拆分调度任务中固定为1。 \\
+\code{--include-combos} & 可选 & 仅处理指定的逗号分隔组合。 \\
+\bottomrule
+\end{longtable}
+
+\textbf{输入输出件：}
+\begin{longtable}{L{0.34\textwidth}L{0.13\textwidth}L{0.41\textwidth}}
+\toprule 描述 & 类型 & 作用 \\ \midrule
+\code{timewindow_manifest.json} & 输入 & 提供组合名称及训练/测试特征和标签路径。 \\
+组合\code{feature.npz}与\code{label.npy} & 输入 & 提供代理筛选和初步评价数据。 \\
+\code{NAMEFILE} & 可选输入 & 将代理列索引映射为原始信号名称。 \\
+\code{selected_indices.txt} & 输出 & 保存当前组合选中的代理列索引。 \\
+代理名称、模型和评价文件 & 输出 & 记录代理的信号映射以及Ridge初步评价结果。 \\
+\code{mcp_per_offset_manifest.json} & 输出 & 记录各组合的代理索引文件、评价文件和完成状态。 \\
+\bottomrule
+\end{longtable}
+
+\textbf{内存开销与限制分析：}MCP代理筛选的内存开销与输入矩阵规模、训练批次和组合并发数有关。具体的内存模型、限制条件及参数配置建议将在“代理筛选算法说明”文档中详细分析，本文不再展开。
+
+
+\section{step2\_xgb\_per\_offset.py}
+
+\textbf{功能描述：}\code{step2_xgb_per_offset.py} 是步骤2的可替换实现。脚本针对每个组合训练XGBoost模型，根据特征重要性选择前 $K$ 个代理，并使用独立测试文件生成初步评价。其输出 manifest 沿用 \code{mcp_per_offset_manifest.json} 名称，以便验证入口采用统一接口。将总控变量 \code{PROXY_SELECTOR} 设置为 \code{xgb} 或 \code{xgboost} 即可启用该程序。
+
+\textbf{示例命令：}
+\begin{lstlisting}
+${PYTHON} src/timewindow/step2_xgb_per_offset.py \
+  --manifest run/step1_shifted/timewindow_manifest.json \
+  --namefile reduced/level/after_one.namefile.txt \
+  --batch 4 \
+  --top-k 200 \
+  --rounds 50 \
+  --max-depth 4 \
+  --eta 0.08 \
+  --subsample 0.9 \
+  --colsample-bytree 0.8 \
+  --nthread 1 \
+  --jobs 1 \
+  --include-combos tog_offset12 \
+  --output-dir run/step2_xgb_proxy/_parts/tog_offset12
+\end{lstlisting}
+
+\textbf{参数列表：}
+\begin{longtable}{L{0.29\textwidth}L{0.14\textwidth}L{0.44\textwidth}}
+\toprule 参数 & 必需性 & 说明 \\ \midrule
+\code{--manifest}、\code{--output-dir} & 必需 & 步骤1 manifest和步骤2输出目录。 \\
+\code{--namefile}、\code{--include-combos} & 可选 & 特征名文件和组合过滤列表。 \\
+\code{--batch} & 可选 & 每批训练文件数量。 \\
+\code{--top-k} & 可选 & 每个组合保留的代理数量，当前总控默认200。 \\
+\code{--rounds} & 可选 & XGBoost提升轮数，当前总控默认50。 \\
+\code{--eta}、\code{--max-depth} & 可选 & 学习率和树深。 \\
+\code{--subsample}、\code{--colsample-bytree} & 可选 & 每轮训练的样本和特征采样比例。 \\
+\code{--nthread} & 可选 & 单个XGBoost模型使用的线程数。 \\
+\code{--jobs} & 可选 & 组合内部并行数；拆分调度任务中固定为1。 \\
+\bottomrule
+\end{longtable}
+
+\textbf{输入输出件：}
+\begin{longtable}{L{0.34\textwidth}L{0.13\textwidth}L{0.41\textwidth}}
+\toprule 描述 & 类型 & 作用 \\ \midrule
+\code{timewindow_manifest.json} & 输入 & 提供组合名称及训练/测试文件路径。 \\
+组合\code{feature.npz}与\code{label.npy} & 输入 & 用于训练代理筛选模型和计算测试指标。 \\
+\code{selected_indices.txt} & 输出 & 保存按特征重要性选出的代理列索引。 \\
+代理名称、XGBoost模型和评价文件 & 输出 & 保存代理映射、模型及独立测试初评。 \\
+\code{mcp_per_offset_manifest.json} & 输出 & 使用统一格式记录各组合的代理索引和评价结果。 \\
+\bottomrule
+\end{longtable}
+
+\textbf{内存开销与限制分析：}XGBoost代理筛选的内存开销与输入矩阵规模、训练批次、模型工作区、线程数和组合并发数有关。具体的内存模型、限制条件及参数配置建议将在“代理筛选算法说明”文档中详细分析，本文不再展开。
+
+
+\section{xgb\_power.py}
+
+\textbf{功能描述：}\code{xgb_power.py} 用于验证步骤2输出的代理特征。脚本读取步骤1 \code{timewindow_manifest.json} 和步骤2 \code{mcp_per_offset_manifest.json}，根据 \code{--combos} 按给定顺序选择组合；每个组合使用步骤1 manifest 中对应的特征文件和标签文件，并依据步骤2 manifest 中的 \code{selected_indices_file} 截取代理列。多个组合的代理特征按列拼接，标签和样本顺序必须保持一致。
+
+运行后，脚本自动调用数据集构造模块，将各组合代理特征写入分块缓存；若未设置 \code{--build-dataset-only}，则继续训练独立XGBoost回归模型，并调用评价模块生成逐点误差和功耗跳变误差。代理索引及其信号映射保存在动态生成的 \code{indices/} 目录，当前组合代理的初步评价保存在同一实验目录的 \code{eval/evaluation_summary.json}。实验目录采用 \code{<hpotag>/<target>-bc<before_cycles>/} 形式，由参数共同决定，并非固定目录。
+
+\textbf{示例命令：}
+\begin{lstlisting}
+cd run/step2_validation_legacy_xgb
+${PYTHON} src/timewindow/step2_validation/xgb_power.py \
+  --tw-manifest run/step1_shifted/timewindow_manifest.json \
+  --proxy-manifest run/step2_mcp/mcp_per_offset_manifest.json \
+  --namefile reduced/level/after_one.namefile.txt \
+  --combos "tog_offset12,level_offset12" \
+  --cache-dir run/step2_validation_legacy_xgb/dataset_cache \
+  --build-block-size 200 \
+  --hpotag legacy_xgb_validation
+\end{lstlisting}
+
+若只检查代理缓存、组合顺序和manifest一致性，可添加 \code{--build-dataset-only}；此时程序在数据集缓存构造完成后停止，不训练模型，也不生成预测评价文件。
+
+\textbf{参数列表：}
+\begin{longtable}{L{0.31\textwidth}L{0.14\textwidth}L{0.42\textwidth}}
+\toprule 参数 & 必需性 & 说明 \\ \midrule
+\code{--tw-manifest}、\code{--proxy-manifest} & 必需 & 步骤1与步骤2的统一manifest。 \\
+\code{--namefile} & 可选 & 原始信号名文件，用于输出代理来源映射。 \\
+\code{--combos} & 可选 & 逗号分隔的组合名称及拼接顺序；留空时使用步骤1中的全部可用组合。 \\
+\code{--cache-dir} & 可选 & 代理特征数据集缓存目录。 \\
+\code{--build-block-size} & 可选 & 每个缓存分片的样本行数；较小值降低组合拼接暂存内存但增加磁盘I/O。 \\
+\code{--data-dtype} & 可选 & 缓存特征类型，可取 \code{float32} 或 \code{float64}。 \\
+\code{--build-dataset-only} & 可选 & 只构建代理数据缓存，不训练和评价。 \\
+\code{--rounds} & 可选 & XGBoost提升轮数，默认200。 \\
+\code{--length}、\code{--before-cycles} & 可选 & 序列长度和预测前周期数；后者也参与动态输出目录命名。 \\
+\code{--label-start-cycle}、\code{--label-scale} & 可选 & 标签起始周期和数值缩放。 \\
+\code{--target}、\code{--hpotag} & 可选 & 预测目标名称和实验标签，共同决定输出路径。 \\
+\code{--fold}、\code{--shuffle-seed}、\code{--fixed-test-last-file} & 可选 & 训练/验证/测试划分设置。 \\
+\code{--tree-method}、\code{--max-bin}、\code{--max-depth}、\code{--max-leaves} & 可选 & XGBoost树构造参数。 \\
+\code{--learning-rate}、\code{--subsample}、\code{--colsample-bytree}、\code{--colsample-bynode} & 可选 & 学习率及行列采样参数。 \\
+\code{--nthread}、\code{--seed}、\code{--device} & 可选 & 线程、随机种子和可选计算设备。 \\
+\bottomrule
+\end{longtable}
+
+\textbf{输入输出件：}
+\begin{longtable}{L{0.34\textwidth}L{0.13\textwidth}L{0.41\textwidth}}
+\toprule 描述 & 类型 & 作用 \\ \midrule
+\code{timewindow_manifest.json} & 输入 & 提供各组合的步骤1特征、标签和样本顺序。 \\
+\code{mcp_per_offset_manifest.json} & 输入 & 提供各组合的 \code{selected_indices_file} 和代理筛选元数据。 \\
+组合特征、标签及代理索引 & 输入 & 构造多组合代理数据集。 \\
+\code{part_*.npz}、标签与样本元数据NPY & 缓存输出 & 保存分块代理特征及其监督标签、用例和周期信息。 \\
+\code{dataset.meta.json} & 缓存输出 & 记录组合顺序、代理来源、列范围和缓存分片。 \\
+动态\code{indices/}目录 & 输出 & 保存代理索引、原始列和信号名称映射。 \\
+动态\code{result/}、\code{pred/}目录 & 训练输出 & 保存模型结果、预测CSV和重要性信息。 \\
+动态\code{eval/evaluation_summary.json} & 评价输出 & 汇总平均绝对百分比误差（Mean Absolute Percentage Error，MAPE）、决定系数（Coefficient of Determination，$R^2$）、归一化均方根误差（Normalized Root Mean Squared Error，NRMSE）及功耗跳变指标。 \\
+\bottomrule
+\end{longtable}
+
+\textbf{内存开销与限制分析：}最终特征宽度等于各组合代理数量之和，组合数和每组合代理数会近似线性增加缓存与训练数据规模。数据集构造至少需要加载当前组合的源矩阵并截取代理列，训练阶段还需容纳训练、验证数据和XGBoost直方图工作区。建议优先使用 \code{float32}，控制组合数量、代理数量和线程数。在硬件内存受限时可以考虑减少时间窗长度、降低初筛代理数量等方法降低数据维度，以此满足内存限制要求。
+
+
+
+\chapter{相关文档}
+
+\begin{longtable}{L{0.40\textwidth}L{0.48\textwidth}}
+\toprule 文档名 & 主要内容 \\ \midrule
+《代理筛选算法说明》 & 说明时间窗口样本构造、MCP/XGBoost 代理筛选、代理组合及验证算法。 \\
+《功耗与电压降风险模型数据集采集说明》 & 说明功耗预测与电压降风险预测任务所需原始数据、采样口径、命名组织和交付要求。 \\
+\bottomrule
+\end{longtable}
+

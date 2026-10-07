@@ -1,0 +1,800 @@
+% !TeX program = XeLaTeX
+% !TeX encoding = UTF-8
+
+\documentclass[UTF8,openany,11pt]{ctexrep}
+
+\usepackage[a4paper,margin=25mm]{geometry}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{longtable}
+\usepackage{xcolor}
+\usepackage{url}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  urlcolor=blue!55!black,
+  bookmarksopen=true,
+  pdfauthor={xgboost_timewindow 项目组},
+  pdftitle={xgboost_timewindow 环境安装、配置与启用指南}
+}
+
+\definecolor{guideblue}{RGB}{39,88,130}
+\definecolor{guidegray}{RGB}{245,247,249}
+\definecolor{warningbg}{RGB}{255,247,230}
+
+\lstdefinestyle{guidecode}{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  frame=single,
+  framerule=0.3pt,
+  rulecolor=\color{black!25},
+  backgroundcolor=\color{guidegray},
+  showstringspaces=false
+}
+\lstset{style=guidecode}
+
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcommand{\code}[1]{{\ttfamily\small\urlstyle{tt}\path{#1}}}
+\newcommand{\important}[1]{%
+  \begin{center}
+  \fcolorbox{orange!55!black}{warningbg}{\parbox{0.92\textwidth}{\textbf{注意：}#1}}
+  \end{center}
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{xgboost\_timewindow}
+\fancyhead[R]{环境安装、配置与启用指南}
+\fancyfoot[C]{\thepage}
+\setlength{\headheight}{14pt}
+\setlist{itemsep=2pt,topsep=4pt}
+
+\begin{document}
+
+\begin{titlepage}
+  \centering
+  \vspace*{35mm}
+  {\Huge\bfseries xgboost\_timewindow\par}
+  \vspace{8mm}
+  {\LARGE\bfseries 环境安装、配置与启用指南\par}
+  \vspace{5mm}
+  {\large Environment Installation, Configuration and Activation Guide\par}
+  \vfill
+  \begin{tabular}{L{0.28\textwidth}L{0.48\textwidth}}
+    \toprule
+    文档版本 & V2.0（结构调整稿） \\
+    适用软件 & xgboost\_timewindow \\
+    适用平台 & Linux x86\_64、C Shell、集群运行环境 \\
+    编制日期 & \today \\
+    文档状态 & 新版副本；不替代原环境启用说明 \\
+    \bottomrule
+  \end{tabular}
+  \vfill
+\end{titlepage}
+
+\chapter*{文档控制}
+\addcontentsline{toc}{chapter}{文档控制}
+
+\section*{修订记录}
+
+\begin{longtable}{L{0.13\textwidth}L{0.16\textwidth}L{0.21\textwidth}L{0.40\textwidth}}
+\toprule
+文档版本 & 日期 & 适用软件版本 & 修改说明 \\
+\midrule
+V2.0 & \today & 当前工作区版本 & 按软件指南结构新建副本；重组安装、配置、操作、验证和故障排查内容。 \\
+\bottomrule
+\end{longtable}
+
+\section*{文档约定}
+
+本文中的路径均使用变量表示，不把某台服务器上的绝对路径作为可移植配置。命令示例默认从 Bash/Sh 发起；若在 C Shell/Tcsh 中交互执行，应使用 \code{setenv NAME value} 设置环境变量。
+
+正文中的“必须”表示缺少该条件时流程不能按预期运行；“建议”表示有助于复现、排查或控制资源，但不一定阻止程序启动。
+
+\tableofcontents
+
+\chapter{概述}
+
+\section{编写目的}
+
+本文档用于指导安装、迁移、配置和验证 \code{xgboost_timewindow} 的运行环境，使使用者能够完成以下任务：
+
+\begin{itemize}
+  \item 使用已有降维 cache 启动 time-window 训练；
+  \item 从原始 FSDB 启动特征导出、标签提取和降维；
+  \item 验证 Python、FsdbReader、Verdi 和集群调度环境；
+  \item 根据日志、状态文件和常见症状定位环境问题。
+\end{itemize}
+
+\section{适用范围}
+
+本文档适用于 Linux x86\_64 服务器、C Shell/Tcsh 脚本环境以及当前工程使用的 \code{bsub}、\code{dsub} 集群提交方式。本文档说明环境和操作接口，不展开 Step1--Step6 算法、MCP/XGBoost 原理、数据 shape 演化或 FSDBAPI 内部接口实现。
+
+\section{目标读者}
+
+\begin{longtable}{L{0.20\textwidth}L{0.68\textwidth}}
+\toprule
+角色 & 关注内容 \\
+\midrule
+环境管理员 & Python/Conda 环境迁移、Verdi/FsdbReader、license、编译器和调度器。 \\
+训练使用者 & 输入 cache、训练变量、启动命令、运行状态和结果目录。 \\
+开发维护者 & FSDBAPI 重新编译、依赖变更、环境故障和文档版本维护。 \\
+\bottomrule
+\end{longtable}
+
+\section{软件组成与文档边界}
+
+\begin{longtable}{L{0.25\textwidth}L{0.63\textwidth}}
+\toprule
+目录或文档 & 职责 \\
+\midrule
+\code{cmd/} & FSDB 前处理、time-window 训练、单步运行和验证入口。 \\
+\code{src/timewindow/} & Step1--Step6 的 Python 实现。 \\
+\code{src/reduction/} & Level/TOG cache 降维实现。 \\
+\code{src/fsdbapi/} & FSDB 导出程序、Makefile、FsdbReader 依赖与接口说明。 \\
+\code{docs/timewindow_training_workflow.md} & 训练数据流、算法步骤和参数说明。 \\
+\code{src/fsdbapi/fsdbapi_Instruction.md} & FSDBAPI 编译、接口和数据处理细节。 \\
+\bottomrule
+\end{longtable}
+
+\chapter{使用场景与快速开始}
+
+\section{场景选择}
+
+\begin{longtable}{L{0.31\textwidth}L{0.23\textwidth}L{0.34\textwidth}}
+\toprule
+场景 & 建议入口 & 需要阅读的章节 \\
+\midrule
+已有 Python 环境和降维 cache & 训练验证脚本 & 第2、4、5、6章 \\
+需要迁移已验证的 Conda 环境 & conda-pack & 第3、4、6章 \\
+从原始 FSDB 生成 cache & FSDB pipeline & 第3、4、5、6章 \\
+新服务器完整部署 & 完整流程 & 第3章至第7章 \\
+\bottomrule
+\end{longtable}
+
+\section{已有cache的最短验证路径}
+
+\textbf{前置条件：}目标机器已存在可用的 Python 解释器、level/tog cache、power label 和匹配的 namefile。
+
+在 Bash/Sh 中执行：
+
+\begin{lstlisting}
+cd /path/to/xgboost_timewindow
+
+PYTHON=/path/to/conda/envs/pro/bin/python \
+LEVEL_DIR=/path/to/reduced/level \
+TOG_DIR=/path/to/reduced/tog \
+LABEL_DIR=/path/to/power_labels \
+NAMEFILE=/path/to/reduced/level/after_one.namefile.txt \
+OUTPUT_ROOT=/path/to/output/timewindow_verify \
+csh cmd/validate_timewindow_training_pro.csh
+\end{lstlisting}
+
+\textbf{通过条件：}
+
+\begin{enumerate}
+  \item 命令返回码为 0；
+  \item \code{OUTPUT_ROOT/STATUS.txt} 最后一项包含 \code{DONE}；
+  \item \code{OUTPUT_ROOT/logs/} 下存在 Step1--Step6 日志；
+  \item \code{step6_retrain/} 下生成最终重训与评估产物。
+\end{enumerate}
+
+\important{验证脚本会运行 Step1--Step6，而不只是检查 Python 导入。首次执行前必须确认输入目录和输出目录。建议为每次验证使用新的 \code{OUTPUT_ROOT}。}
+
+\section{完整启用顺序}
+
+\begin{enumerate}
+  \item 确认目标链路：从已有 cache 训练，或从原始 FSDB 前处理；
+  \item 检查操作系统、shell、存储、调度器和访问权限；
+  \item 安装或迁移 Python 环境；
+  \item 若使用 FSDB 链路，配置并验证 FsdbReader、Verdi 和 license；
+  \item 设置路径、输入、输出及调度参数；
+  \item 执行静态检查和小规模验证；
+  \item 验证通过后再提交正式作业。
+\end{enumerate}
+
+\chapter{安装与部署}
+
+\section{基础要求}
+
+\begin{longtable}{L{0.23\textwidth}L{0.65\textwidth}}
+\toprule
+项目 & 要求 \\
+\midrule
+操作系统 & Linux x86\_64。 \\
+Shell & 必须能够执行 \code{csh}；交互环境可使用 Bash/Sh 或 Tcsh。 \\
+Python & 当前已验证环境使用 Python 3.8.17；正式运行建议使用固定版本的独立环境。 \\
+编译工具 & FSDBAPI 需要支持 C++17 的 \code{g++} 和 \code{make}。 \\
+训练调度器 & 主训练脚本默认通过 \code{dsub} 提交任务。 \\
+FSDB调度器 & FSDB 前处理脚本通过 \code{bsub} 提交任务。 \\
+存储 & 正式流程建议预留 TB 级空间；验证环境可按实际数据规模降低。 \\
+内存 & 正式流程需根据特征数和采样量估算；600 GB 是大规模训练参考值，不是安装最低要求。 \\
+\bottomrule
+\end{longtable}
+
+\section{Python环境部署}
+
+\subsection{方式一：使用已有环境}
+
+若机器上已有经过验证的环境，直接记录解释器绝对路径：
+
+\begin{lstlisting}
+export CONDA_ENV_ROOT=/path/to/conda/envs/pro
+export PYTHON="${CONDA_ENV_ROOT}/bin/python"
+"${PYTHON}" --version
+\end{lstlisting}
+
+当前脚本未显式设置 \code{PYTHON} 时会回退到开发环境的绝对路径。迁移到其他机器时，必须在启动命令前覆盖 \code{PYTHON}，不要依赖该默认值。
+
+\subsection{方式二：迁移conda-pack环境}
+
+在已验证环境所在机器执行：
+
+\begin{lstlisting}
+conda install -c conda-forge conda-pack
+conda pack -n pro -o pro-conda-env.tar.gz
+\end{lstlisting}
+
+将压缩包传输到目标机器后执行：
+
+\begin{lstlisting}
+mkdir -p /path/to/conda/envs/pro
+tar -xzf pro-conda-env.tar.gz -C /path/to/conda/envs/pro
+/path/to/conda/envs/pro/bin/conda-unpack
+\end{lstlisting}
+
+然后设置：
+
+\begin{lstlisting}
+export CONDA_ENV_ROOT=/path/to/conda/envs/pro
+export PYTHON="${CONDA_ENV_ROOT}/bin/python"
+\end{lstlisting}
+
+批处理作业通常不要求先执行 \code{conda activate}；只要 \code{PYTHON} 指向正确解释器即可。交互调试或依赖 Conda 修改 \code{PATH} 的外部命令可按需激活环境。
+
+\subsection{方式三：重新创建环境}
+
+仓库当前没有受版本管理的 \code{environment.yml}、requirements 锁定文件或完整的离线包清单。因此，从零安装只能作为开发或临时验证方案，不能声明与当前 \code{pro} 环境完全一致。
+
+基础依赖至少包括：
+
+\begin{lstlisting}
+python -m pip install \
+  numpy scipy pandas scikit-learn xgboost \
+  optuna matplotlib joblib
+\end{lstlisting}
+
+MCP 路径推荐安装与现有代码兼容的 \code{skglm}。如果缺失，Step2 MCP 实现可能进入 variance fallback；正式结果复现前必须确认实际选择器。
+
+后续应补充机器可读、可审查的锁定文件，并把它作为依赖版本的唯一来源。
+
+\section{Python依赖验证}
+
+\begin{lstlisting}
+"${PYTHON}" - <<'PY'
+import sys
+import numpy, scipy, sklearn, pandas, xgboost, optuna
+import matplotlib, joblib
+
+print("python", sys.executable)
+print("numpy", numpy.__version__)
+print("scipy", scipy.__version__)
+print("sklearn", sklearn.__version__)
+print("pandas", pandas.__version__)
+print("xgboost", xgboost.__version__)
+print("optuna", optuna.__version__)
+print("matplotlib", matplotlib.__version__)
+print("joblib", joblib.__version__)
+
+try:
+    import skglm
+    print("skglm", getattr(skglm, "__version__", "unknown"))
+except ImportError:
+    print("WARNING: skglm missing; MCP may use fallback")
+PY
+\end{lstlisting}
+
+\section{FSDBAPI与FsdbReader部署}
+
+FSDBAPI 位于 \code{PACKAGE_ROOT/src/fsdbapi}。Makefile 优先使用工程内置目录：
+
+\begin{lstlisting}
+src/fsdbapi/third_party/verdi/FsdbReader
+\end{lstlisting}
+
+若该目录存在 \code{ffrAPI.h}，执行：
+
+\begin{lstlisting}
+cd "${PACKAGE_ROOT}/src/fsdbapi"
+make
+\end{lstlisting}
+
+若需要使用外部 Verdi/FsdbReader：
+
+\begin{lstlisting}
+cd "${PACKAGE_ROOT}/src/fsdbapi"
+make VERDI_HOME=/path/to/verdi/R-2020.12-SP2
+\end{lstlisting}
+
+切换 FsdbReader 版本或安装目录后应重新编译，不建议直接移动旧二进制。编译完成后检查：
+
+\begin{lstlisting}
+test -x build/fsdb_to_tog_cache
+test -x build/fsdb_to_power_label
+ldd build/fsdb_to_tog_cache | grep 'not found'
+\end{lstlisting}
+
+最后一条命令没有输出，表示 \code{ldd} 未发现缺失动态库。仍需使用实际 FSDB 做最小读取验证，才能确认 license 和文件兼容性。
+
+\chapter{配置}
+
+\section{路径模型}
+
+本文档采用以下互不混用的路径变量：
+
+\begin{longtable}{L{0.24\textwidth}L{0.25\textwidth}L{0.39\textwidth}}
+\toprule
+变量 & 示例 & 说明 \\
+\midrule
+\code{PACKAGE_ROOT} & \code{/work/xgboost_timewindow} & 软件包根目录，包含 \code{cmd/}、\code{src/} 和 \code{docs/}。 \\
+\code{PROJECT_ROOT} & \code{/work} & 工作区根目录；脚本默认取 \code{PACKAGE_ROOT} 上一级。 \\
+\code{CONDA_ENV_ROOT} & \code{/opt/conda/envs/pro} & Conda 环境目录，不属于软件包目录。 \\
+\code{PYTHON} & \code{CONDA_ENV_ROOT/bin/python} & 启动 Python 程序的解释器。 \\
+\code{OUTPUT_ROOT} & \code{/data/output/run_001} & 本次训练的独立输出目录。 \\
+\code{WORK_DIR} & \code{/data/tmp/tw_work} & 临时文件和任务工作目录。 \\
+\bottomrule
+\end{longtable}
+
+推荐在每次运行前明确记录：
+
+\begin{lstlisting}
+export PACKAGE_ROOT=/path/to/xgboost_timewindow
+export PROJECT_ROOT=/path/to/workspace
+export CONDA_ENV_ROOT=/path/to/conda/envs/pro
+export PYTHON="${CONDA_ENV_ROOT}/bin/python"
+\end{lstlisting}
+
+\section{训练链路必填配置}
+
+\begin{longtable}{L{0.24\textwidth}L{0.16\textwidth}L{0.48\textwidth}}
+\toprule
+变量 & 要求 & 说明 \\
+\midrule
+\code{PYTHON} & 必须确认 & 已安装完整依赖的 Python 解释器。 \\
+\code{LEVEL_DIR} & 必须存在 & 降维后的 level cache 目录。 \\
+\code{TOG_DIR} & 必须存在 & 降维后的 tog cache 目录。 \\
+\code{LABEL_DIR} & 必须存在 & Power label 的 NPY 文件目录。 \\
+\code{NAMEFILE} & 必须存在 & 与 cache 同批生成的 signal name 文件。 \\
+\code{OUTPUT_ROOT} & 强烈建议设置 & 本次运行输出目录，应使用新目录或明确可续跑目录。 \\
+\bottomrule
+\end{longtable}
+
+\important{\code{LEVEL_DIR}、\code{TOG_DIR} 和 \code{NAMEFILE} 必须来自同一批降维结果。不要把不同 run、不同 stage 或不同硬件的数据混合使用。}
+
+\section{训练调度配置}
+
+\begin{longtable}{L{0.28\textwidth}L{0.22\textwidth}L{0.38\textwidth}}
+\toprule
+变量 & 默认值 & 说明 \\
+\midrule
+\code{DSUB_CMD} & \code{dsub} & 训练任务提交命令。 \\
+\code{DSUB_QUEUE} & 空 & 留空时使用调度器默认队列。 \\
+\code{DSUB_EXTRA_ARGS} & 空数组 & 额外资源参数；C Shell 数组语法。 \\
+\code{POLL_SEC} & \code{30} & 主流程检查状态文件的轮询间隔。 \\
+\code{STEP1_PARALLEL_DSUB} & \code{1} & Step1 是否拆分提交。 \\
+\code{STEP2_PARALLEL_DSUB} & \code{1} & Step2 是否拆分提交。 \\
+\bottomrule
+\end{longtable}
+
+执行正式训练前至少确认：
+
+\begin{lstlisting}
+command -v dsub
+dsub --help
+\end{lstlisting}
+
+若站点 \code{dsub} 不支持 \code{--help}，使用该站点规定的只读查询命令确认客户端可用。
+
+\section{FSDB链路配置}
+
+\code{cmd/run_fsdb_pipeline.csh} 当前在脚本中定义 \code{fsdb_list}、\code{power_list}、采样参数和层级过滤参数。启动前必须审查以下内容：
+
+\begin{itemize}
+  \item \code{fsdb_list}：workload 名、RTL FSDB、起止时间；
+  \item \code{power_list}：与 workload 对齐的 power FSDB 和 signal；
+  \item \code{STEP}、\code{RAW_COL}、\code{MAX_MEM}、\code{TARGET_COLS}；
+  \item \code{SIGNAL_PREFIX} 和 \code{MAX_CYCLES_PER_FILE}；
+  \item \code{BSUB_QUEUE}、\code{BSUB_EXTRA_ARGS}、\code{POLL_SEC}。
+\end{itemize}
+
+\important{FSDB pipeline 启动时会重建 \code{WORK_DIR/cache_HW}，并清理部分 complete/failed 标志。不要让 \code{WORK_DIR} 或 \code{OUTPUT_BASE} 指向需要保留且未备份的其他运行目录。}
+
+\section{站点激活文件}
+
+FSDB pipeline 会在包根目录查找可选的 \code{activate.csh}。该文件适合集中维护站点变量：
+
+\begin{lstlisting}
+# ${PACKAGE_ROOT}/activate.csh 示例
+setenv VERDI_HOME /path/to/verdi/R-2020.12-SP2
+setenv FSDB_READER_DIR ${VERDI_HOME}/share/FsdbReader
+setenv SNPSLMD_LICENSE_FILE /path/or/license-server
+
+if ( $?LD_LIBRARY_PATH ) then
+    setenv LD_LIBRARY_PATH ${FSDB_READER_DIR}/linux64:${LD_LIBRARY_PATH}
+else
+    setenv LD_LIBRARY_PATH ${FSDB_READER_DIR}/linux64
+endif
+\end{lstlisting}
+
+真实 license 信息和服务器地址不应提交到公共仓库。若二进制已通过 rpath 正确定位动态库，不需要重复设置 \code{LD_LIBRARY_PATH}。
+
+\chapter{操作指南}
+
+\section{启动已有cache训练}
+
+\textbf{目的：}从降维后的 level/tog cache 运行完整 Step1--Step6 主流程。
+
+\textbf{前置条件：}第6章 L0 和 L1 检查均通过，\code{dsub} 可用，输出目录可写。
+
+\begin{lstlisting}
+cd /path/to/xgboost_timewindow
+
+PYTHON=/path/to/conda/envs/pro/bin/python \
+LEVEL_DIR=/path/to/reduced/level \
+TOG_DIR=/path/to/reduced/tog \
+LABEL_DIR=/path/to/power_labels \
+NAMEFILE=/path/to/reduced/level/after_one.namefile.txt \
+OUTPUT_ROOT=/path/to/output/timewindow_run_001 \
+csh cmd/run_timewindow_pipeline.csh gemmini all
+\end{lstlisting}
+
+第二个位置参数支持：
+
+\begin{longtable}{L{0.20\textwidth}L{0.68\textwidth}}
+\toprule
+模式 & 行为 \\
+\midrule
+\code{all} & 运行完整流程。 \\
+\code{prep} & 运行准备和筛选阶段，具体阶段边界以入口脚本为准。 \\
+\code{train_k} & 对指定 K 执行训练；第三个位置参数必须提供 K。 \\
+\bottomrule
+\end{longtable}
+
+指定 K 的示例：
+
+\begin{lstlisting}
+csh cmd/run_timewindow_pipeline.csh gemmini train_k 1024
+\end{lstlisting}
+
+\section{选择代理筛选方式}
+
+默认 \code{PROXY_SELECTOR=mcp}。使用 MCP：
+
+\begin{lstlisting}
+PROXY_SELECTOR=mcp \
+csh cmd/run_timewindow_pipeline.csh gemmini all
+\end{lstlisting}
+
+使用 XGBoost proxy 推荐调用封装入口：
+
+\begin{lstlisting}
+PYTHON=/path/to/conda/envs/pro/bin/python \
+XGB_PROXY_TOP_K=200 \
+XGB_PROXY_ROUNDS=50 \
+csh cmd/run_timewindow_pipeline_xgb_proxy.csh gemmini all
+\end{lstlisting}
+
+选择器的算法、参数含义和输出契约见 \code{docs/timewindow_training_workflow.md}，本指南不重复说明。
+
+\section{启动FSDB前处理}
+
+\textbf{目的：}从 RTL FSDB 和 power FSDB 生成降维后的 level/tog cache 与标签。
+
+\textbf{前置条件：}
+
+\begin{enumerate}
+  \item 已检查并按本次数据修改 \code{fsdb_list} 与 \code{power_list}；
+  \item FSDBAPI 已编译，动态库和 license 可用；
+  \item \code{bsub} 可用；
+  \item 工作目录和输出目录有足够空间且不包含需要保留的同名临时 cache。
+\end{enumerate}
+
+执行：
+
+\begin{lstlisting}
+cd /path/to/xgboost_timewindow
+csh cmd/run_fsdb_pipeline.csh gemmini
+\end{lstlisting}
+
+通过条件：终端输出“FSDB Pipeline 完成”，\code{OUTPUT_BASE/complete} 存在，且对应 \code{HW_reduced/level}、\code{HW_reduced/tog} 目录包含 cache 和 signal name 文件。
+
+\section{查询运行状态}
+
+训练主流程将日志和提交脚本写入：
+
+\begin{lstlisting}
+${OUTPUT_ROOT}/logs_dsub/
+${OUTPUT_ROOT}/jobs_dsub/
+\end{lstlisting}
+
+各阶段使用 \code{complete}、\code{failed} 和 \code{status} 文件协调依赖。排查时先确认失败阶段，再查看该阶段对应日志；不要只根据主进程是否仍在轮询判断任务成功。
+
+快速验证脚本使用：
+
+\begin{lstlisting}
+${OUTPUT_ROOT}/STATUS.txt
+${OUTPUT_ROOT}/logs/
+\end{lstlisting}
+
+FSDB 前处理主要日志位于：
+
+\begin{lstlisting}
+${OUTPUT_BASE}/logs/
+${OUTPUT_BASE}/${HW}_reduced/complete
+${OUTPUT_BASE}/${HW}_reduced/failed
+\end{lstlisting}
+
+\section{续跑与重新运行}
+
+\begin{itemize}
+  \item 新实验优先使用新的 \code{RUN_TAG} 或 \code{OUTPUT_ROOT}；
+  \item \code{STEP1_SKIP_EXISTING=1} 会复用已有 Step1 产物；
+  \item 续跑前确认输入、offset、data type、stage 和代理选择器没有变化；
+  \item 输入或关键配置变化时，不应复用旧 manifest、buffer 或状态文件；
+  \item 清理或删除任何输出前，先确认路径和备份策略。
+\end{itemize}
+
+\chapter{验证与验收}
+
+\section{L0：静态环境检查}
+
+在提交任务前执行：
+
+\begin{lstlisting}
+test -d "${PACKAGE_ROOT}/cmd"
+test -x "${PYTHON}"
+command -v csh
+command -v dsub
+"${PYTHON}" -c \
+  "import numpy,scipy,sklearn,pandas,xgboost,optuna"
+\end{lstlisting}
+
+使用 FSDB 链路时增加：
+
+\begin{lstlisting}
+command -v bsub
+test -x "${PACKAGE_ROOT}/src/fsdbapi/build/fsdb_to_tog_cache"
+test -x "${PACKAGE_ROOT}/src/fsdbapi/build/fsdb_to_power_label"
+ldd "${PACKAGE_ROOT}/src/fsdbapi/build/fsdb_to_tog_cache" \
+  | grep 'not found'
+\end{lstlisting}
+
+前五项应返回 0；最后一项应无输出。无输出只表示动态链接检查通过，不代表 license 和 FSDB 文件读取必然成功。
+
+\section{L1：输入与权限检查}
+
+\begin{lstlisting}
+test -d "${LEVEL_DIR}"
+test -d "${TOG_DIR}"
+test -d "${LABEL_DIR}"
+test -f "${NAMEFILE}"
+test -r "${NAMEFILE}"
+mkdir -p "${OUTPUT_ROOT}"
+test -w "${OUTPUT_ROOT}"
+\end{lstlisting}
+
+同时人工确认：
+
+\begin{enumerate}
+  \item level、tog、label 中的 case/stem 能够对应；
+  \item namefile 与 \code{STAGE} 一致；
+  \item 输出目录不是其他实验正在使用的目录；
+  \item 临时目录和输出磁盘空间满足本次配置。
+\end{enumerate}
+
+\section{L2：小规模端到端验证}
+
+使用第2.2节命令运行 \code{validate_timewindow_training_pro.csh}。为降低验证规模，可设置：
+
+\begin{lstlisting}
+SAMPLE_ROWS_PER_FILE=128 \
+SAMPLE_BINS=16 \
+SAMPLE_MIN_PER_BIN=2 \
+PYTHON=/path/to/conda/envs/pro/bin/python \
+csh cmd/validate_timewindow_training_pro.csh
+\end{lstlisting}
+
+该验证会依次运行 Step1--Step6。若任一步返回非零状态，脚本会退出；应从 \code{STATUS.txt} 的最后一个 start/done 记录和对应日志定位失败步骤。
+
+\section{验收标准}
+
+\begin{longtable}{L{0.23\textwidth}L{0.65\textwidth}}
+\toprule
+验收项 & 通过条件 \\
+\midrule
+Python环境 & 解释器路径正确，必需依赖导入成功；MCP 是否使用 \code{skglm} 已确认。 \\
+FSDBAPI & 二进制存在、动态库无缺失，最小 FSDB 读取成功。 \\
+输入数据 & level/tog/label/namefile 可读且属于同批数据。 \\
+调度器 & \code{dsub} 或 \code{bsub} 可提交到目标队列并写出日志。 \\
+训练验证 & \code{STATUS.txt} 包含 \code{DONE}，Step1--Step6 产物完整。 \\
+FSDB流程 & \code{HW_reduced/complete} 和总体 \code{complete} 存在，无对应 \code{failed}。 \\
+可追溯性 & 日志中可以确认 Python、输入、输出、选择器和关键参数。 \\
+\bottomrule
+\end{longtable}
+
+\chapter{故障排查}
+
+\section{Python解释器或依赖失败}
+
+\textbf{现象：}提示解释器不存在，或 \code{ModuleNotFoundError}。
+
+\textbf{诊断：}
+
+\begin{lstlisting}
+ls -l "${PYTHON}"
+"${PYTHON}" -c "import sys; print(sys.executable); print(sys.path)"
+\end{lstlisting}
+
+\textbf{处理：}重新设置 \code{PYTHON}；若为 conda-pack 环境，确认已运行 \code{conda-unpack}。不要通过修改系统 Python 临时掩盖项目环境问题。
+
+\section{MCP结果与预期不一致}
+
+\textbf{现象：}MCP 阶段进入 variance fallback，或筛选结果与已验证环境不同。
+
+\textbf{诊断：}
+
+\begin{lstlisting}
+"${PYTHON}" -c "import skglm; print(skglm.__file__)"
+\end{lstlisting}
+
+\textbf{处理：}安装与项目兼容的 \code{skglm}，或明确改用 XGBoost proxy。正式结果中应记录实际使用的选择器和 fallback 状态。
+
+\section{FsdbReader动态库失败}
+
+\textbf{现象：}提示 \code{libnffr.so}、\code{libnsys.so} 等无法加载。
+
+\textbf{诊断：}
+
+\begin{lstlisting}
+ldd src/fsdbapi/build/fsdb_to_tog_cache | grep 'not found'
+\end{lstlisting}
+
+\textbf{处理：}优先使用正确的 \code{VERDI_HOME} 或 \code{FSDB_READER_DIR} 重新编译。仅在临时诊断时设置 \code{LD_LIBRARY_PATH}，并确认路径对应同一 FsdbReader 版本。
+
+\section{Verdi license失败}
+
+\textbf{现象：}二进制能够加载，但打开 FSDB 或调用库时报告 license 错误。
+
+\textbf{处理：}检查站点规定的 license 环境变量、服务器连通性和授权范围。license 地址属于站点敏感配置，应由管理员提供，不写入公开文档或仓库。
+
+\section{调度任务提交失败}
+
+\textbf{现象：}\code{dsub} 或 \code{bsub} 返回非零状态，任务没有进入队列。
+
+\textbf{诊断：}检查命令是否存在、队列名、资源参数、账户权限以及提交日志。
+
+\textbf{处理：}使 \code{DSUB_QUEUE/DSUB_EXTRA_ARGS} 或 \code{BSUB_QUEUE/BSUB_EXTRA_ARGS} 与当前集群策略一致。注意两条链路使用不同调度器，不要混用变量名。
+
+\section{输入数据或namefile不匹配}
+
+\textbf{现象：}列索引越界、feature name 数量不符、case/stem 缺失或 manifest 校验失败。
+
+\textbf{处理：}重新确认 level、tog、label、namefile 和 stage 的来源。输入来源变化后使用新的 \code{OUTPUT_ROOT}，避免复用旧 manifest 和 buffer。
+
+\section{已有产物被错误复用}
+
+\textbf{现象：}参数修改后任务快速跳过，或结果仍表现为旧配置。
+
+\textbf{处理：}检查 \code{STEP1_SKIP_EXISTING}、各阶段 \code{complete} 文件和输出目录。优先新建 run 目录；如果必须清理旧产物，应先确认精确路径并备份需要保留的结果。
+
+\section{内存或磁盘不足}
+
+\textbf{处理：}验证阶段降低 \code{SAMPLE_ROWS_PER_FILE} 或 \code{SAMPLE_ROWS_TOTAL}；正式任务结合 \code{TARGET_COLS}、cache 分片、Step1 输出压缩和调度器资源参数重新估算。清理前先区分可再生临时文件和需要归档的训练结果。
+
+\appendix
+
+\chapter{常用环境变量参考}
+
+\section{训练路径与输入}
+
+\begin{longtable}{L{0.30\textwidth}L{0.20\textwidth}L{0.38\textwidth}}
+\toprule
+变量 & 当前默认或来源 & 说明 \\
+\midrule
+\code{PACKAGE_ROOT} & 脚本自动定位 & 软件包根目录。 \\
+\code{PROJECT_ROOT} & \code{PACKAGE_ROOT/..} & 工作区根目录。 \\
+\code{PYTHON} & 开发机绝对路径 & 迁移后必须覆盖。 \\
+\code{REDUCTION_BASE} & \code{PROJECT_ROOT/output/...} & 默认降维输出根目录。 \\
+\code{LEVEL_DIR} & 按 HW 推导 & Level cache。 \\
+\code{TOG_DIR} & 按 HW 推导 & TOG cache。 \\
+\code{LABEL_DIR} & 按 HW 推导 & Power label。 \\
+\code{STAGE} & \code{after_one} & 降维阶段。 \\
+\code{NAMEFILE} & 按 LEVEL\_DIR/STAGE 推导 & Signal name 映射。 \\
+\code{RUN_TAG} & 当前时间戳 & 运行标识。 \\
+\code{OUTPUT_ROOT} & 按 HW/STAGE/RUN\_TAG 推导 & 本次训练目录。 \\
+\bottomrule
+\end{longtable}
+
+\section{常用训练控制变量}
+
+\begin{longtable}{L{0.32\textwidth}L{0.16\textwidth}L{0.40\textwidth}}
+\toprule
+变量 & 当前默认 & 说明 \\
+\midrule
+\code{OFFSETS} & \code{12,11,10,9,8,7,6} & Time-window 偏移。 \\
+\code{DATA_TYPES} & \code{tog,level} & 输入类型。 \\
+\code{TEST_COUNT} & \code{1} & 测试 case 数量。 \\
+\code{SAMPLE_ROWS_PER_FILE} & \code{0} & 每文件采样量；0 表示不按文件采样。 \\
+\code{SAMPLE_ROWS_TOTAL} & \code{0} & 全局采样总量；0 表示不启用。 \\
+\code{SAMPLE_BINS} & \code{20} & Power 分层采样 bin 数。 \\
+\code{SAMPLE_SEED} & \code{108} & 采样随机种子。 \\
+\code{PROXY_SELECTOR} & \code{mcp} & \code{mcp}、\code{xgb} 或 \code{xgboost}。 \\
+\code{TOP_KS} & \code{256,512,1024,2048,4096} & Screening 和后续训练的 K。 \\
+\code{RUN_STEP2_VALIDATION} & \code{1} & 是否执行 Step2 独立验证。 \\
+\bottomrule
+\end{longtable}
+
+\chapter{命令速查}
+
+\section{Python依赖检查}
+
+\begin{lstlisting}
+"${PYTHON}" -c \
+  "import numpy,scipy,sklearn,pandas,xgboost,optuna"
+\end{lstlisting}
+
+\section{快速训练验证}
+
+\begin{lstlisting}
+PYTHON=/path/to/python \
+LEVEL_DIR=/path/to/level \
+TOG_DIR=/path/to/tog \
+LABEL_DIR=/path/to/labels \
+NAMEFILE=/path/to/after_one.namefile.txt \
+OUTPUT_ROOT=/path/to/new/verify_output \
+csh cmd/validate_timewindow_training_pro.csh
+\end{lstlisting}
+
+\section{正式训练}
+
+\begin{lstlisting}
+PYTHON=/path/to/python \
+LEVEL_DIR=/path/to/level \
+TOG_DIR=/path/to/tog \
+LABEL_DIR=/path/to/labels \
+NAMEFILE=/path/to/after_one.namefile.txt \
+OUTPUT_ROOT=/path/to/new/train_output \
+csh cmd/run_timewindow_pipeline.csh gemmini all
+\end{lstlisting}
+
+\section{FSDB前处理}
+
+\begin{lstlisting}
+cd /path/to/xgboost_timewindow
+csh cmd/run_fsdb_pipeline.csh gemmini
+\end{lstlisting}
+
+\chapter{术语与缩略语}
+
+\begin{longtable}{L{0.22\textwidth}L{0.66\textwidth}}
+\toprule
+术语 & 说明 \\
+\midrule
+Package root & \code{xgboost_timewindow} 软件包根目录。 \\
+Project root & 软件包上一级工作区目录。 \\
+Cache & 从 FSDB 导出并经清理、降维后的稀疏特征数据。 \\
+Namefile & 将特征列索引映射回 signal 名称的文件。 \\
+Manifest & 描述输入文件、组合、索引或中间产物的元数据文件。 \\
+Smoke test & 使用较小配置验证环境与关键链路的端到端测试。 \\
+MCP & Minimax Concave Penalty，本项目中的一种代理筛选方式。 \\
+\bottomrule
+\end{longtable}
+
+\end{document}

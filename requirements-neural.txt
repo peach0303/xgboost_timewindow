@@ -1,0 +1,2 @@
+# Optional dependency: required by Step5 HPO and Step6 bnn/lstm/ltc backends.
+torch>=2.0

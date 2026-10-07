@@ -1,0 +1,19 @@
+{
+  "source": "project_default",
+  "description": "Default MLP parameters for direct retraining without HPO.",
+  "params": {
+    "hidden_layer_sizes": [
+      128,
+      128
+    ],
+    "activation": "relu",
+    "alpha": 1e-05,
+    "batch_size": 128,
+    "learning_rate_init": 0.001,
+    "max_iter": 100,
+    "n_iter_no_change": 12,
+    "validation_fraction": 0.15,
+    "tol": 0.0001,
+    "random_state": 108
+  }
+}

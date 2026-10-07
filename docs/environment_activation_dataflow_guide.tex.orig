@@ -1,0 +1,1105 @@
+% !TeX program = XeLaTeX
+% !TeX encoding = UTF-8
+% V2.2: 保留数据流框架，恢复初版工程技术手册风格，并增加 IR-drop 拟定支路。
+
+\makeatletter
+\def\input@path{{docs/latex_build/}{latex_build/}}
+\makeatother
+\documentclass{fduthesis}
+
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{url}
+\usepackage{graphicx}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
+\let\cleardoublepage\clearpage
+
+\lstdefinestyle{shellstyle}{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  frame=single,
+  framerule=0.3pt,
+  rulecolor=\color{black!25},
+  backgroundcolor=\color{black!3}
+}
+\lstset{style=shellstyle}
+
+\newcommand{\code}[1]{{\ttfamily\small\urlstyle{tt}\path{#1}}}
+\newcommand{\smallcode}[1]{{\ttfamily\footnotesize\detokenize{#1}}}
+\newcommand{\tablecode}[1]{{\ttfamily\scriptsize\detokenize{#1}}}
+\newcommand{\envdir}{{\ttfamily\small\{env\_dir\}}}
+\newcommand{\important}[1]{\par\medskip\noindent\textbf{注意：}#1\par\medskip}
+
+\fdusetup{
+  style = {
+    font-size = 5,
+    fullwidth-stop = false,
+    font = lm,
+    cjk-font = fandol,
+    auto-make-cover = false,
+  },
+  info = {
+    title = {代理筛选环境启用与数据处理指南},
+    title* = {Environment Activation and Data Processing Guide for xgboost\_timewindow},
+    author = {陈一恒},
+    supervisor = { },
+    major = { },
+    degree = academic,
+    department = { },
+    student-id = { },
+    keywords = {XGBoost, time-window, MCP, FSDB, IR-drop},
+    keywords* = {XGBoost, time-window, MCP, FSDB, IR-drop},
+    clc = {TP000}
+  }
+}
+
+% Keep Latin text consistent across body text, headings, diagrams, and code.
+\renewcommand{\sfdefault}{\rmdefault}
+\renewcommand{\ttdefault}{\rmdefault}
+
+\begin{document}
+
+\frontmatter
+\begin{titlepage}
+  \centering
+  \vspace*{2.5cm}
+  {\zihao{2}\bfseries xgboost\_timewindow 环境启用与数据处理指南\par}
+  \vspace{1.5cm}
+  \vfill
+  {\zihao{4}\today\par}
+\end{titlepage}
+\tableofcontents
+\mainmatter
+
+\chapter{编写目的与使用范围}
+
+本文档用于说明数据处理与模型训练过程所需依赖环境的搭建方法，并给出从原始数据到训练数据集的提取边界。完成部署后，使用者应能够运行快速信号数据库（FSDB）格式转换程序，生成模型所需的特征与标签，并完成代理特征筛选环境的部署。代理筛选脚本及其执行流程将在《代理筛选算法说明》中详细介绍，本文仅说明代理筛选所需依赖环境的搭建过程。
+
+Rocket--Gemmini 硬件平台的生成、仿真与部署可参考 Chipyard 官方文档，本文不重复介绍相关硬件工具链。项目后端环境基于华为 Dophis 平台搭建，相关技术资料已较为完善，本文不再展开说明。
+
+本文档仅适用于功耗预测任务与电压降风险预测任务中，数据处理与模型训练环境准备阶段，内容包括：
+
+\begin{itemize}
+  \item 快速信号数据库（FSDB）格式转换所需的动态链接库、编译工具和 Python 环境；
+  \item 时间窗口样本构造、MCP/XGBoost 代理筛选所需的 Python 环境；
+  \item 电平/翻转特征矩阵、功耗标签及电压降风险标签的数据提取与构造流程。
+\end{itemize}
+
+本文不涉及 Rocket--Gemmini 硬件平台部署、Chipyard 工具链安装及华为 Dophis 平台初始化，也不展开模型训练、超参数优化和后端物理设计等流程。受数据集构建进度限制，电压降风险标签转换目前仍处于接口与算法设计阶段，尚未形成经过完整验证的处理流程。
+
+\chapter{环境部署}
+
+本章说明首次运行前必须具备的两套环境。路径示例均需替换为目标机器上的实际绝对路径；批处理脚本建议显式传入 \code{PYTHON}，避免登录环境与计算节点解释器不一致。
+
+\section{FSDB格式转换环境部署}
+
+FSDB 格式转换同时依赖 FsdbReader 动态链接库、C++ 编译环境和 Python 数据处理环境。
+
+\subsection{动态链接库与编译环境}
+
+目标机器应提供支持 C++17 的 \code{g++}、\code{make}，以及可用的 Verdi 2018.09sp2/FsdbReader 安装和配套许可证环境。设置软件包根目录并编译：
+
+\begin{lstlisting}
+export PACKAGE_ROOT=/path/to/xgboost_timewindow
+cd "${PACKAGE_ROOT}/src/fsdbapi"
+
+# 使用工程内置 FsdbReader 配置
+make
+
+# 或显式指定站点 Verdi
+make VERDI_HOME=/path/to/verdi/2018.09sp2
+\end{lstlisting}
+
+编译后确认两个转换程序存在，且不存在未解析的动态库：
+
+\begin{lstlisting}
+test -x build/fsdb_to_tog_cache
+test -x build/fsdb_to_power_label
+ldd build/fsdb_to_tog_cache | grep 'not found'
+\end{lstlisting}
+
+最后一条命令应无输出。还应选取一个实际 FSDB 文件执行最小读取测试，以同时验证动态库版本、FSDB 文件格式和许可证环境。
+
+\subsection{Python环境}
+
+格式转换后的缓存合并、数组转换和特征清洗至少需要 \code{numpy}、\code{scipy} 与 \code{pandas}。项目交付文件中附带已经验证的 Conda 环境压缩包 \code{pro.tar.gz}；环境初始化时，将该文件解压到指定目录并修正环境前缀即可使用，无需重新安装 Python 及相关依赖。
+
+\begin{lstlisting}
+# 将交付文件 pro.tar.gz 解压到指定位置
+mkdir -p /path/to/conda/envs/pro
+tar -xzf /path/to/delivery/pro.tar.gz -C /path/to/conda/envs/pro
+
+# 激活环境并修正打包前缀
+source /path/to/conda/envs/pro/bin/activate
+conda-unpack
+
+export CONDA_ENV_ROOT=/path/to/conda/envs/pro
+export PYTHON=${CONDA_ENV_ROOT}/bin/python
+"${PYTHON}" --version
+\end{lstlisting}
+
+后续批处理任务可不激活交互式 Conda 环境，但必须显式设置 \code{PYTHON}，确保计算节点使用上述交付环境中的解释器。
+
+\section{代理筛选环境部署}
+
+交付文件中的 \code{pro.tar.gz} 已包含代理筛选与验证所需的 \code{numpy}、\code{scipy}、\code{pandas}、\code{scikit-learn}、\code{xgboost}、\code{optuna}、\code{matplotlib}、\code{joblib} 和 \code{skglm} 等依赖，无需另行安装。按照 2.1.2 节完成解压和前缀修正后，激活 \code{pro} 环境并执行以下命令检查环境完整性：
+
+\begin{lstlisting}
+source /path/to/conda/envs/pro/bin/activate
+python -m pip check
+
+python - <<'PY'
+import sys
+import numpy, scipy, pandas, sklearn, xgboost, optuna
+import matplotlib, joblib, skglm
+print("python", sys.executable)
+print("xgboost", xgboost.__version__)
+print("skglm", getattr(skglm, "__version__", "unknown"))
+print("proxy selection environment: OK")
+PY
+\end{lstlisting}
+
+\code{python -m pip check} 应输出 \code{No broken requirements found.}，Python 导入检查应正常结束并打印 \code{proxy selection environment: OK}。若检查失败，应首先确认当前解释器来自已解压的 \code{pro} 环境，并检查是否已执行 \code{conda-unpack}。
+
+\chapter{数据集提取流程}
+\section{快速启动}
+
+\code{cmd/run_fsdb_pipeline.csh} 是数据集提取的总控入口，用于串联 RTL FSDB 特征导出、功耗标签导出、用例缓存合并和无效信息剔除。脚本接收一个硬件或数据集名称作为位置参数，该参数在脚本内记为 \code{HW}，并用于生成缓存目录、输出目录和批处理任务名称。
+
+\textbf{启动命令示例：}
+
+\begin{lstlisting}
+cd /path/to/xgboost_timewindow
+csh cmd/run_fsdb_pipeline.csh gemmini
+\end{lstlisting}
+
+示例中的 \code{gemmini} 为 \code{HW}。首次运行或迁移数据后，应先检查下表中的配置。
+
+\begin{longtable}{L{0.25\textwidth}L{0.28\textwidth}L{0.35\textwidth}}
+\toprule
+类别 & 变量或配置 & 检查内容 \tabularnewline
+\midrule
+运行环境 & \code{activate.csh}、\code{LD_LIBRARY_PATH}、\code{PYTHON} & 确认能够加载 Verdi 2018.09sp2/FsdbReader 动态库，并使用解压后的 \code{pro} Python 环境。 \tabularnewline
+硬件标识 & \code{HW} & 由命令行第一个参数传入；同名 \code{HW} 会复用固定输出路径，并重建 \code{WORK_DIR/cache_HW} 临时目录。 \tabularnewline
+基础路径 & \code{FSDB_DIR} & RTL FSDB 与功耗 FSDB 的公共根目录；所有计算节点必须具有读取权限。 \tabularnewline
+输出路径 & \code{OUTPUT_BASE}、\code{WORK_DIR} & 分别保存正式输出和临时缓存；运行前确认路径、剩余容量和写权限。 \tabularnewline
+RTL输入 & \code{fsdb_list} & 每项依次填写用例标识、RTL FSDB 路径、采样起点和终点；用例标识必须唯一，且终点大于起点。 \tabularnewline
+功耗输入 & \code{power_list} & 每项依次填写用例标识、功耗 FSDB 路径和功耗信号层级；用例标识必须与 \code{fsdb_list} 对应。不导出功耗时设为空列表。 \tabularnewline
+采样设置 & \code{STEP}、\code{END_INCL}、\code{DROP_FIRST} & 核对采样间隔、是否包含终点及是否删除首行。起点、终点和间隔均使用 FSDB tag，物理时间由 FSDB 的仿真 timescale 决定。 \tabularnewline
+信号范围 & \code{SIGNAL_PREFIX} & 留空表示不过滤；设置时确认层级前缀能够匹配目标信号。 \tabularnewline
+信号读取 & \code{REVERSE_BUS_BITS}、\code{VIEW_START} & 仅在总线位序与 Verdi 不一致，或起始时刻需要提前加载事件以恢复初始电平时修改。 \tabularnewline
+分块设置 & \code{RAW_COL}、\code{MAX_CYCLES_PER_FILE} & 分别控制每个导出块的原始总线信号数和单个 NPZ 分片的最大周期数。 \tabularnewline
+资源设置 & \code{MAX_MEM}、\code{TARGET_COLS} & 检查缓存合并和无效信息剔除阶段的内存预算及输出规模配置；无明确需求时沿用交付默认值。 \tabularnewline
+任务调度 & \code{DSUB_QUEUE}、\code{DSUB_EXTRA_ARGS}、\code{POLL_SEC} & 确认多瑙队列、内存申请等附加参数符合多瑙平台要求；轮询间隔一般无需修改。 \tabularnewline
+\bottomrule
+\end{longtable}
+
+\important{脚本会删除并重建 \code{${WORK_DIR}/cache_${HW}}，同时清除同名缓存、降维目录及总输出目录中的部分 \code{complete/failed} 标志。重新运行前必须确认 \code{HW}、\code{WORK_DIR} 和 \code{OUTPUT_BASE} 不会覆盖仍需保留的中间结果。}
+
+总控脚本内部调用的主要程序如下。
+
+\begin{longtable}{L{0.39\textwidth}L{0.49\textwidth}}
+\toprule
+程序或脚本 & 处理目的 \tabularnewline
+\midrule
+\code{src/fsdbapi/build/fsdb_to_tog_cache} & 读取 RTL FSDB，按“用例$\times$原始信号块”导出 Level/TOG CSC 稀疏缓存；也用于列出信号和生成 block 划分表。 \tabularnewline
+\code{src/fsdbapi/bin/concat_tog_cache_blocks.py} & 拼接同一用例的多个 block manifest，恢复用例级缓存清单，并检查各 block 的采样配置是否一致。 \tabularnewline
+\code{src/fsdbapi/build/fsdb_to_power_label} & 从功耗 FSDB 中读取指定功耗信号，按与 RTL 特征一致的时间窗口输出审计 TSV 和元数据。 \tabularnewline
+总控脚本内嵌的 Python 转换代码 & 读取功耗 TSV 的 \code{power} 列，按 \code{DROP_FIRST} 处理首行并保存为 \code{float32 NPY}。 \tabularnewline
+\code{src/fsdbapi/bin/merge_tog_cache_manifests.py} & 沿样本行方向合并不同用例的缓存，检查 block 划分、原始表头和展开列布局是否一致。 \tabularnewline
+总控脚本内嵌的 Level Manifest 生成代码 & 根据合并后的 TOG manifest 和初始电平文件生成 Level 输入 manifest，供后续 Level/TOG 同步处理。 \tabularnewline
+\code{src/reduction/dimentionality_reduction_csv.py} & 清理 x/z 信号及其展开列、删除全0列并合并全1列，输出训练使用的 Level/TOG 特征和信号名称。 \tabularnewline
+\bottomrule
+\end{longtable}
+
+主流程结束后，应检查以下输出件：
+
+\begin{itemize}
+  \item \code{${OUTPUT_BASE}/${HW}_cache/_work/tog_cache_manifest.json}：合并后的缓存清单；核对输入用例、总行数、block 数量、各 block 列数和文件路径；
+  \item \code{${OUTPUT_BASE}/${HW}_power/}：每个功耗用例对应的 \code{<case>.npy}、\code{<case>.power.meta.json} 和 \code{<case>.complete}，以及目录级 \code{complete}；若 \code{power_list} 为空，仅检查目录级完成标志；
+  \item \code{${OUTPUT_BASE}/${HW}_reduced/level/} 和 \code{tog/}：无效信息剔除后的稀疏 NPZ、\code{after_one.namefile.txt} 及对应阶段文件；
+  \item \code{${OUTPUT_BASE}/${HW}_reduced/meta.json}、\code{final_cols.txt}、\code{original_headers.txt} 和 \code{complete}：核对处理前后列数、名称映射、用例行数和完成状态；
+  \item \code{${OUTPUT_BASE}/logs/}：检查 block 导出、功耗导出、缓存合并和无效信息剔除日志，确认没有动态库、许可证、列布局、内存或任务提交错误；
+  \item \code{${OUTPUT_BASE}/complete}：总流程完成标志。任一相关目录存在 \code{failed} 时，不得使用本次输出进入训练。
+\end{itemize}
+
+特征矩阵与功耗标签必须按用例核对行数；同一用例的 Level、TOG 和标签行数一致后，才可进入后续时间窗口样本构造。
+
+\appendix
+
+\chapter{数据提取脚本使用说明}
+
+\section{特征矩阵提取}
+
+完成 RTL 仿真后，可获得各测试用例对应的 FSDB 波形文件。原始 FSDB 记录的是分层信号及其随时间变化的取值，不能直接作为模型训练输入，需要先使用 \code{src/fsdbapi/bin/fsdb_to_tog_cache.py} 将信号展开为位级电平（Level）与翻转（TOG）特征，并以压缩稀疏列（CSC）矩阵的形式保存为 NPZ 分片。
+
+\textbf{单个用例格式转换示例：}
+
+\begin{lstlisting}
+export PACKAGE_ROOT=/path/to/xgboost_timewindow
+export PYTHON=/path/to/conda/envs/pro/bin/python
+
+"${PYTHON}" "${PACKAGE_ROOT}/src/fsdbapi/bin/fsdb_to_tog_cache.py" \
+  --fsdb /data/rtl/case_1.fsdb \
+  --output-dir /data/work/case_1 \
+  --dataset-name case_1 \
+  --start 0 \
+  --end 50000 \
+  --step 2 \
+  --raw-col-block 20000 \
+  --tog-mode sample-xor \
+  --end-inclusive \
+  --drop-first-tog-row
+\end{lstlisting}
+
+必要参数说明如下：
+
+\begin{itemize}
+  \item \code{--fsdb}：RTL 仿真生成的 FSDB 文件；\code{--output-dir}：当前用例的缓存输出目录；\code{--dataset-name}：用例标识，后续拼接时必须保持唯一。
+  \item \code{--start}、\code{--end}、\code{--step}：采样起点、终点和间隔，单位均为 FSDB 原始时间标签（FSDB tag）。tag 对应的物理时间由生成该 FSDB 时的仿真 timescale 决定，并不固定等同于 ns；配置前应在仿真设置或 Verdi 中确认时间精度，并使 \code{--step} 对齐目标时钟周期。
+  \item \code{--end-inclusive}：将 \code{--end} 对应时刻纳入采样；\code{--drop-first-tog-row}：删除差分产生的首个占位 TOG 行。该设置必须与标签支路的首行处理一致。
+  \item \code{--raw-col-block}：每个缓存块包含的原始总线信号数，不是总线展开后的位列数；\code{--tog-mode sample-xor}：使用相邻采样电平异或生成 TOG，并保留恢复 Level 所需的初始电平。
+  \item \code{--signal-list}：可选的信号范围文件；未提供时导出读取器支持的全部信号。
+\end{itemize}
+
+转换结束后，应检查 \code{<output-dir>/_work/tog_cache_manifest.json} 是否存在，并核对其中的 \code{source_fsdb}、\code{sample_start}、\code{sample_end}、\code{sample_step}、\code{output_rows} 和 \code{blocks}。每个 block 的文件路径应存在，\code{n_rows} 应一致，\code{n_cols} 应与名称列表长度一致，\code{nnz} 应为非负值；同时检查日志中不存在读取失败、动态库错误或许可证错误。
+
+为并行处理多个用例和宽信号集合，生产入口 \code{cmd/run_fsdb_pipeline.csh} 以“用例标识（case id）$\times$ 原始信号分块（block id）”为任务粒度提交 \code{bsub}。每个用例的 block 任务完成后，先使用 \code{concat_tog_cache_blocks.py} 归并同一用例的分块清单：
+
+\begin{lstlisting}
+"${PYTHON}" "${PACKAGE_ROOT}/src/fsdbapi/bin/concat_tog_cache_blocks.py" \
+  --manifest /data/work/case_1/blocks/block_00001/_work/tog_cache_manifest.json \
+  --manifest /data/work/case_1/blocks/block_00002/_work/tog_cache_manifest.json \
+  --output-dir /data/work/case_1_cache \
+  --dataset-name case_1
+\end{lstlisting}
+
+其中 \code{--manifest} 可重复指定各 block 的清单，\code{--output-dir} 为用例级缓存目录，\code{--dataset-name} 必须与导出时的用例标识一致。输出检查以 \code{<case-cache>/_work/tog_cache_manifest.json} 为准；所有 block 的采样起止、步长、TOG 模式和输出行数必须一致。
+
+不同用例的特征矩阵随后使用 \code{merge_tog_cache_manifests.py} 沿样本行方向拼接：
+
+\begin{lstlisting}
+"${PYTHON}" "${PACKAGE_ROOT}/src/fsdbapi/bin/merge_tog_cache_manifests.py" \
+  --manifest /data/work/case_1_cache/_work/tog_cache_manifest.json \
+  --manifest /data/work/case_2_cache/_work/tog_cache_manifest.json \
+  --output-dir /data/work/merged_cache \
+  --max-mem 180GB \
+  --max-cycles-per-file 1000
+\end{lstlisting}
+
+\code{--manifest} 按需要重复传入各用例清单；\code{--max-mem} 是合并阶段的内存预算；\code{--max-cycles-per-file} 控制单个 NPZ 分片的最大行数，0 表示仅在必要时自动分片。合并脚本会校验各用例是否使用相同的 block 划分、原始表头和展开列布局；发现列缺失、名称顺序不一致或矩阵列数与名称数不一致时必须终止，不能直接拼接。完成后检查 \code{<merged-cache>/_work/tog_cache_manifest.json}，确认所有输入用例均已记录、各 block 列数一致，且合并后的总行数等于各用例行数之和。
+
+最后使用 \code{src/reduction/dimentionality_reduction_csv.py} 剔除不提供有效训练信息的列。本文仅使用未知态/高阻态清理、全0列删除和全1列合并，不涉及其他特征压缩方法：
+
+\begin{lstlisting}
+"${PYTHON}" "${PACKAGE_ROOT}/src/reduction/dimentionality_reduction_csv.py" \
+  --input-cache-manifest /data/work/merged_cache/_work/tog_cache_manifest.json \
+  --input-tog-cache-manifest /data/work/merged_cache/_work/tog_cache_manifest.json \
+  --input-data-type level \
+  --output-dir /data/output/gemmini_reduced \
+  --output-meta /data/output/gemmini_reduced/meta.json \
+  --output-cols /data/output/gemmini_reduced/final_cols.txt \
+  --output-original-headers /data/output/gemmini_reduced/original_headers.txt \
+  --max-mem 180GB \
+  --cache-format csc \
+  --save-after-xz-clean \
+  --save-after-one \
+  --disable-duplicate-remove \
+  --disable-sim-reduce
+\end{lstlisting}
+
+\code{--input-cache-manifest} 指向待处理的 Level 缓存清单；当清单采用 \code{initial_plus_tog} 模式时，同时通过 \code{--input-tog-cache-manifest} 提供对应 TOG 清单。\code{--input-data-type level} 表示同时生成 Level 与 TOG 输出；\code{--max-mem} 为处理阶段内存预算；\code{--save-after-xz-clean} 和 \code{--save-after-one} 保存中间验收结果。示例显式关闭本文范围之外的处理。
+
+处理完成后，应确认输出目录中不存在 \code{failed} 标志，并检查 \code{level/}、\code{tog/}、\code{meta.json}、\code{final_cols.txt} 和 \code{original_headers.txt}。默认训练输入为 \code{after_one}：其中已清理 x/z 信号及展开列、删除全0列，并将全1列合并为一个保留列。\code{level/after_one.namefile.txt} 与 \code{tog/after_one.namefile.txt} 的列数和顺序必须一致，各用例 Level/TOG 矩阵的行数也必须一致。至此，特征矩阵提取完成。
+
+\section{功耗标签导出}
+
+PrimeTime PX（PTPX）生成的初始功耗数据同样以 FSDB 形式保存，不能直接作为训练标签。使用 \code{src/fsdbapi/bin/fsdb_to_power_label.py} 读取指定功耗信号，可一次生成审计 TSV、元数据 JSON 和模型使用的 NPY 标签：
+
+\begin{lstlisting}
+"${PYTHON}" "${PACKAGE_ROOT}/src/fsdbapi/bin/fsdb_to_power_label.py" \
+  --fsdb /data/power/case_1.fsdb \
+  --power-signal top.chip.power \
+  --output-dir /data/output/gemmini_power \
+  --dataset-name case_1 \
+  --start 0 \
+  --end 50000 \
+  --step 2 \
+  --end-inclusive \
+  --drop-first-sample \
+  --dtype float32
+\end{lstlisting}
+
+\code{--fsdb} 为 PTPX 功耗 FSDB；\code{--power-signal} 为功耗信号的完整层级名或唯一后缀；\code{--output-dir} 和 \code{--dataset-name} 决定输出目录及文件前缀。\code{--start}、\code{--end} 和 \code{--step} 同样使用功耗 FSDB 的原始 tag，物理时间由该文件的 timescale 决定。只有在 RTL FSDB 与功耗 FSDB 使用相同时间基准时，才能直接复用相同数值；否则应先换算到相同物理采样时刻。\code{--drop-first-sample} 必须与特征导出时的 \code{--drop-first-tog-row} 保持一致。
+
+输出检查包括 \code{case_1.power.samples.tsv}、\code{case_1.power.meta.json} 和 \code{case_1.npy}。NPY 应为 \code{float32}、形状为“周期数$\times$1”，且不包含 NaN 或 Inf；元数据中的 \code{npy_shape}、\code{npy_dtype}、采样范围和首行处理设置应与实际文件一致。最后按用例核对标签行数与 \code{after_one} 特征矩阵行数，任一用例不一致均不得进入训练。
+
+\section{电压降风险标签构造}
+
+电压降结果由后端工具按周期输出实例级报告，需要解析用例标识、周期标识、实例名称和电压降值，并通过实例到分块（tile）的映射聚合为0/1风险矩阵。设周期为 $c$、分块为 $t$，分块内最大电压降为
+
+\[
+D_{c,t}=\max_{i\mapsto t}\mathrm{IRDrop}_{c,i},
+\]
+
+给定经物理设计侧确认的分块风险阈值 $V_{\mathrm{risk},t}$，二值标签定义为
+
+\[
+R_{c,t}=\begin{cases}
+1, & D_{c,t}\ge V_{\mathrm{risk},t},\\
+0, & D_{c,t}<V_{\mathrm{risk},t}.
+\end{cases}
+\]
+
+计划新增 \code{src/irdrop/convert_instance_reports_to_tile_risk.py} 完成报告解析与标签构造，并由 \code{cmd/run_irdrop_label_pipeline.csh} 提供批处理入口。拟定的单次转换命令如下：
+
+\begin{lstlisting}
+"${PYTHON}" \
+  "${PACKAGE_ROOT}/src/irdrop/convert_instance_reports_to_tile_risk.py" \
+  --report-manifest /data/irdrop/report_manifest.csv \
+  --instance-tile-map /data/irdrop/instance_tile_map.tsv \
+  --thresholds /data/irdrop/tile_thresholds.tsv \
+  --output-dir /data/output/ir_drop_labels \
+  --aggregation max \
+  --dtype uint8
+\end{lstlisting}
+
+\code{--report-manifest} 至少包含 \code{case_id}、\code{cycle_id} 和 \code{report_path}；每份报告必须提供实例名及电压降值。\code{--instance-tile-map} 固定实例与分块编号的对应关系；\code{--thresholds} 给出各分块的风险阈值及单位；\code{--aggregation max} 表示取分块内实例最大电压降；\code{--dtype uint8} 将风险保存为0/1矩阵。周期编号或时间戳必须换算到与特征矩阵相同的采样时刻，并采用相同的首周期处理规则。
+
+拟定输出包括 \code{manifest.json}、\code{tile_index.tsv}、\code{risk_matrix/<case>.npy}、\code{valid_mask/<case>.npy} 和 \code{cycle_index/<case>.npy}。验收时应确认风险矩阵形状为“周期数$\times$分块数”、数据类型为 \code{uint8}、取值集合为 $\{0,1\}$，所有用例使用相同的分块顺序，周期数与特征矩阵一致；还应抽查若干“周期、分块”组合，确认标签能够由原始报告、映射表和阈值重新计算。未映射实例、缺测周期和单位不一致必须写入清单并通过有效性掩码标记，不能直接当作低风险。
+
+\important{上述电压降脚本及命令为计划接口，当前仓库尚未提供可执行实现。正式实现前必须确认后端报告格式、电压降单位、周期基准、实例命名规则、分块映射和风险阈值。}
+
+\appendix
+\chapter{FSDB转换脚本与特征标签算法}
+
+\section{阶段目标}
+
+\textbf{功能描述：}本阶段把原始寄存器传输级快速信号数据库（RTL FSDB）转换成训练可读取的稀疏电平/翻转特征矩阵（level/TOG feature matrix），并把功耗快速信号数据库（power FSDB）中的目标信号（signal）转换成与特征时间窗口对齐的32位浮点型数组标签文件（float32 NPY）。
+
+\textbf{处理机制：}特征清洗顺序为：
+
+\begin{enumerate}
+  \item 清理包含未知态/高阻态（x/z/X/Z）的原始信号（signal）及其展开列；
+  \item 删除全0列；
+  \item 对全1列仅保留1列。
+\end{enumerate}
+
+默认训练阶段使用 \code{after_one}，即已经完成未知态/高阻态（x/z）、全0和全1清理的特征集合。
+
+\section{输入数据规模与内存占用参考}
+
+\textbf{规模口径：}快速信号数据库（FSDB）的文件字节数不能直接换算为内存占用。阶段一的资源规模主要由用例数量、实际采样行数、总线展开后的位列数和非零元素数量决定。应以 \code{block_list.tsv} 中的 \code{signals}、\code{bits} 字段，以及缓存清单中的 \code{n_rows}、\code{nnz} 字段作为估算依据。
+
+设一个导出分块包含 $T$ 行、$C_b$ 个展开位列，非零率为 $\rho_b$，则非零元素数量和稀疏压缩列（CSC）有效载荷可估算为：
+
+\[
+Z_b \approx T C_b \rho_b,\qquad
+M_{\mathrm{CSC}} \approx 5Z_b+8(C_b+1)\quad\text{字节}
+\]
+
+上式对应8位无符号整数数据、32位行索引和64位列指针。导出任务写出前仍会保留整个时间窗口的非零行索引；考虑索引重组和数组压缩包（NPZ）序列化期间的临时副本，显式矩阵部分可先按 $3$ 至 $5$ 倍的 $M_{\mathrm{CSC}}$ 作为试跑起点，并依据最大驻留集大小（RSS）继续上调；该倍数不是上限。另外还需考虑快速信号数据库读取器（FsdbReader）的内部缓存和名称元数据。缓存合并脚本分别对单个输入读取和输出组装执行保护性检查，近似为：
+
+\[
+M_{\mathrm{merge,in}} \approx 50Z_b+55(C_b+1)+64\,\mathrm{MiB},
+\qquad
+M_{\mathrm{merge,out}} \approx 36(Z_b+C_b+1)+64\,\mathrm{MiB}
+\]
+
+\textbf{参考示例（估算）：}假设某个用例经清单确认后有25000个有效周期，一个导出分块展开为200000个位列，非零率为1\%，则 $Z_b=50000000$。稀疏压缩列（CSC）有效载荷约240兆字节（MiB），导出程序显式矩阵部分的试跑起点约为0.7至1.2吉字节（GiB）；缓存合并的输出组装检查值约为1.75吉字节（GiB），单输入读取检查值约为2.40吉字节（GiB），预算至少取两项中的较大值。同周期数的单列32位浮点型功耗标签（float32 power label）有效载荷约98千字节（KiB）。这些数值均为计算示例，不是实测峰值或容量承诺。
+
+\textbf{资源建议：}
+
+\begin{itemize}
+  \item 用例数量主要线性增加总输入/输出（I/O）量和磁盘占用；同一节点并发运行多个导出或合并任务时，应按各任务峰值累加申请内存。
+  \item \code{RAW_COL} 按原始总线信号数量分块，不按展开后的位列数量分块；宽总线较多时必须查看 \code{block_list.tsv} 的 \code{bits} 字段。
+  \item \code{MAX_CYCLES_PER_FILE} 控制输出行分片，但不会把导出过程改成按周期流式计算，因此不能按分片行数等比例下调导出任务内存。
+  \item 当前 \code{MAX_MEM=180GB} 仅是脚本内部预算，合并和快照默认使用其中60\%作为单矩阵检查上限；批处理系统（LSF）的实际申请仍需通过 \code{BSUB_EXTRA_ARGS} 配置。
+  \item 周期数量必须以清单和元数据记录为准，并逐用例核对特征与标签行数；不能只根据起止时刻和采样步长推断。
+\end{itemize}
+
+\section{输入要求}
+
+\begin{longtable}{L{0.22\textwidth}L{0.28\textwidth}L{0.38\textwidth}}
+\toprule
+输入 & 配置位置 & 要求 \\
+\midrule
+寄存器传输级快速信号数据库（RTL FSDB）& \code{fsdb_list} & 每行包含工作负载（workload）、快速信号数据库（FSDB）绝对路径、起点和终点。 \\
+功耗快速信号数据库（power FSDB）& \code{power_list} & 工作负载（workload）必须能在 \code{fsdb_list} 中找到同名项。 \\
+功耗信号（power signal）& \code{power_list} 第三列 & 必须是快速信号数据库读取器（FsdbReader）可读取的有效层级名称。 \\
+采样配置 & \code{STEP}、\code{DROP_FIRST} & 特征和标签必须使用一致的时间窗口及采样步长。 \\
+信号范围（signal scope）& \code{SIGNAL_PREFIX} & 空值表示不限制；设置后仅导出匹配层级。 \\
+\bottomrule
+\end{longtable}
+
+示例格式：
+
+\begin{lstlisting}
+set fsdb_list = ( \
+  "case_1 /data/rtl/case_1.fsdb 0 50000" \
+  "case_2 /data/rtl/case_2.fsdb 0 50000" \
+)
+
+set power_list = ( \
+  "case_1 /data/power/case_1.fsdb top.chip.power" \
+  "case_2 /data/power/case_2.fsdb top.chip.power" \
+)
+\end{lstlisting}
+
+\section{环境准备}
+
+阶段一额外依赖支持第17版编程语言标准（C++17）的编译器（\code{g++}）、构建工具（\code{make}）、批处理命令（\code{bsub}）、Verdi 2018.09sp2/FsdbReader 动态库及有效的许可证环境（license environment）。
+
+快速信号数据库应用程序编程接口（FSDB API）位于：
+
+\begin{lstlisting}
+${PACKAGE_ROOT}/src/fsdbapi
+\end{lstlisting}
+
+工程内置快速信号数据库读取器（FsdbReader）可用时执行：
+
+\begin{lstlisting}
+cd "${PACKAGE_ROOT}/src/fsdbapi"
+make
+\end{lstlisting}
+
+使用外部调试工具（Verdi）时执行：
+
+\begin{lstlisting}
+make VERDI_HOME=/path/to/verdi/2018.09sp2
+\end{lstlisting}
+
+检查二进制和动态库：
+
+\begin{lstlisting}
+test -x build/fsdb_to_tog_cache
+test -x build/fsdb_to_power_label
+ldd build/fsdb_to_tog_cache | grep 'not found'
+\end{lstlisting}
+
+最后一条命令应无输出。
+
+动态库检查通过后，还应读取实际的快速信号数据库（FSDB）文件。该检查用于确认许可证（license）、快速信号数据库读取器（FsdbReader）版本和文件格式兼容。
+
+\section{处理步骤与实现对应}
+
+\begin{longtable}{L{0.12\textwidth}L{0.28\textwidth}L{0.48\textwidth}}
+\toprule
+顺序 & 程序或脚本 & 数据处理 \\
+\midrule
+1 & \code{fsdb_to_tog_cache} & 按时间窗口和信号范围（time-window and signal scope）导出初始电平/翻转缓存（level/TOG cache）。 \\
+2 & \code{fsdb_to_power_label} & 从功耗快速信号数据库（power FSDB）提取目标信号（signal），写入制表符分隔值文件（TSV）后转换为数组标签文件（NPY）。 \\
+3 & 缓存合并脚本（cache merge script）& 合并各用例/分块的清单（case/block manifest），保持特征列和时间索引可追踪。 \\
+4 & \code{dimentionality_reduction_csv.py} & 依次清理未知态/高阻态（x/z）信号及展开列、删除全0列，并对全1列仅保留1列。 \\
+\bottomrule
+\end{longtable}
+
+本文涉及的无效信息剔除阶段名称：
+
+\begin{lstlisting}
+after_xz_clean -> after_zero -> after_one
+\end{lstlisting}
+
+与本文所述无效信息剔除过程对应的保存参数包括：
+
+\begin{itemize}
+  \item \code{--save-after-xz-clean}；
+  \item \code{--save-after-one}。
+\end{itemize}
+
+因此会保存未知态/高阻态（x/z）清洗结果及全0、全1列处理结果。\code{after_zero} 的列集合与统计会写入元数据，但默认不单独保存完整矩阵快照。
+
+\section{启动命令}
+
+启动前检查脚本中的输入列表、采样配置、\code{MAX_MEM}、\code{MAX_CYCLES_PER_FILE}、\code{BSUB_QUEUE} 和 \code{BSUB_EXTRA_ARGS}。
+
+\begin{lstlisting}
+cd "${PACKAGE_ROOT}"
+csh cmd/run_fsdb_pipeline.csh gemmini
+\end{lstlisting}
+
+\important{该入口会重建 \code{WORK_DIR/cache_HW}，并清理部分完成/失败标志（complete/failed）。必须确认 \code{WORK_DIR}、\code{OUTPUT_BASE} 和硬件标识（HW）名称不会覆盖需要保留的运行。}
+
+\section{阶段输出}
+
+默认输出接口为：
+
+\begin{lstlisting}
+${OUTPUT_BASE}/${HW}_reduced/
+  level/                         # 清洗后的电平特征稀疏矩阵（level）
+  tog/                           # 清洗后的翻转特征稀疏矩阵（TOG）
+  meta.json                      # 各清洗阶段统计与映射
+  final_cols.txt
+  original_headers.txt
+  complete
+
+${OUTPUT_BASE}/${HW}_power/
+  <case>.npy                     # 32位浮点功耗标签（float32 power label）
+  <case>.power.meta.json
+  <case>.complete
+  complete
+\end{lstlisting}
+
+\section{阶段验收}
+
+\begin{enumerate}
+  \item \code{${OUTPUT_BASE}/${HW}_reduced/complete} 存在，且不存在同目录 \code{failed}；
+  \item \code{${OUTPUT_BASE}/${HW}_power/complete} 存在；
+  \item 电平/翻转特征和标签（level/TOG/label）中的用例/文件主干名（case/stem）一一对应；
+  \item \code{meta.json} 中能够追踪 \code{after_xz_clean}、\code{after_zero}、\code{after_one} 的列数变化；
+  \item \code{after_one.namefile.txt} 与对应矩阵列数一致；
+  \item 特征行数与删除首行等对齐策略处理后的标签行数一致。
+\end{enumerate}
+
+\chapter{时间窗口与代理筛选算法}
+
+\section{阶段目标}
+
+\textbf{功能描述：}本阶段包含两个连续子步骤：先把阶段一的电平/翻转特征（level/TOG）和标签按时间偏移量/数据类型（offset/data type）组织为时间窗口样本（time-window samples），再对每个组合执行极小极大凹惩罚（MCP）代理抽取。
+
+\textbf{处理机制：}步骤1负责样本与文件列表组织，步骤2按时间偏移量和数据类型独立筛选代理特征，二者通过清单文件衔接：
+
+\begin{lstlisting}
+清洗后电平/翻转特征与功耗标签（level/TOG + power labels）
+              |
+              v
+步骤1（Step1）：时间窗口样本构造（time-window sample preparation）
+              |
+              v
+timewindow_manifest.json
+              |
+              v
+步骤2（Step2）：按偏移量/数据类型（offset/data type）执行极小极大凹惩罚（MCP）
+              |
+              v
+mcp_per_offset_manifest.json + 选中索引（selected indices）
+\end{lstlisting}
+
+\section{输入数据规模与内存占用参考}
+
+\textbf{规模口径：}设有效样本行数为 $R$、清洗后特征列数为 $P$、非零元素数量为 $Z$。阶段二的压缩稀疏行（CSR）矩阵沿用阶段一的数据类型；对于8位无符号整数数据和32位索引，其未压缩内存约为：
+
+\[
+M_{\mathrm{CSR}} \approx 5Z+4(R+1)\quad\text{字节}
+\]
+
+步骤1（Step1）为每个时间偏移量/数据类型组合（offset/data type combination）生成独立的 $R\times P$ 矩阵。时间偏移量不会增加单矩阵列数，但磁盘占用近似随偏移量数量线性增长。标签在本阶段保存为64位浮点型数组（float64 NPY），每个用例约占 $8R$ 字节。当前极小极大凹惩罚（MCP）真实路径会把8位无符号整数压缩稀疏行（uint8 CSR）转换为64位浮点型压缩稀疏列（float64 CSC），仅该临时矩阵约占：
+
+\[
+M_{\mathrm{MCP}} \approx 12Z+4(P+1)\quad\text{字节}
+\]
+
+\textbf{参考示例（当前五用例产物）：}每个用例988行、163379列；翻转特征（TOG）平均非零率约9.27\%，电平特征（level）平均非零率约26.78\%。单个偏移量下，两种数据类型的五用例未压缩稀疏数组合计约1.35吉字节（GiB）；按默认7个偏移量估算约9.49吉字节（GiB）。现有13个偏移量参考目录约18吉字节（GiB），与线性估算基本一致。
+
+在 \code{BATCH_SIZE=4}、\code{TEST_COUNT=1}、\code{STEP2_JOBS=1} 时，一个翻转特征组合的可核算基础缓冲约1.27吉字节（GiB），电平特征组合约3.78吉字节（GiB）。计入稀疏格式转换、求解器工作区和临时副本后，可分别从每个工作进程（worker）2吉字节（GiB）和5至6吉字节（GiB）开始试跑，再依据最大驻留集大小（RSS）增加余量。该示例用于资源校准，不代表其他数据集的最低配置。
+
+\textbf{资源建议：}
+
+\begin{itemize}
+  \item \code{STEP1_JOBS} 和 \code{STEP2_JOBS} 在组合间并行，单节点峰值近似为并发工作进程之和；首次运行建议均设为1。
+  \item \code{BATCH_SIZE} 表示一次加载的训练用例文件数量。减小该值可以降低内存，但也会改变“逐批筛选后按测试指标选择最佳批次”的结果，不是纯性能参数。
+  \item \code{SAMPLE_ROWS_PER_FILE} 可以近似按采样比例降低步骤1磁盘和步骤2内存，但会改变训练样本分布，必须生成新的 \code{OUTPUT_ROOT}。
+  \item \code{STEP1_COMPRESS_OUTPUT} 主要影响磁盘占用和写出开销；加载后的稀疏矩阵内存不会因压缩而下降。
+\end{itemize}
+
+\section{输入要求}
+
+\begin{longtable}{L{0.25\textwidth}L{0.18\textwidth}L{0.45\textwidth}}
+\toprule
+变量 & 必需性 & 要求 \\
+\midrule
+\code{LEVEL_DIR} & 必须 & 阶段一同一运行批次（run）的电平特征（level）输出目录。 \\
+\code{TOG_DIR} & 必须 & 阶段一同一运行批次（run）的翻转特征（TOG）输出目录。 \\
+\code{LABEL_DIR} & 必须 & 与特征用例（case）和时间窗口（time-window）对齐的功耗数组文件（power NPY）目录。 \\
+\code{NAMEFILE} & 必须 & 与 \code{STAGE} 对应的信号名称（signal name）文件。 \\
+\code{OUTPUT_ROOT} & 必须确认 & 阶段二和阶段三共享的独立运行目录。 \\
+\bottomrule
+\end{longtable}
+
+推荐设置：
+
+\begin{lstlisting}
+export PYTHON=/path/to/conda/envs/pro/bin/python
+export LEVEL_DIR=/data/output/fsdb_pipeline/gemmini_reduced/level
+export TOG_DIR=/data/output/fsdb_pipeline/gemmini_reduced/tog
+export LABEL_DIR=/data/output/fsdb_pipeline/gemmini_power
+export NAMEFILE=${LEVEL_DIR}/after_one.namefile.txt
+export OUTPUT_ROOT=/data/output/proxy_run_001
+\end{lstlisting}
+
+\important{\code{LEVEL_DIR}、\code{TOG_DIR}、\code{LABEL_DIR} 和 \code{NAMEFILE} 必须属于同一数据批次。更换输入、阶段（stage）、时间偏移量（offset）或采样规则时，应使用新的 \code{OUTPUT_ROOT}。}
+
+\section{步骤1（Step1）：构造时间窗口样本（time-window samples）}
+
+主要控制变量：
+
+\begin{longtable}{L{0.30\textwidth}L{0.16\textwidth}L{0.42\textwidth}}
+\toprule
+变量 & 默认值 & 说明 \\
+\midrule
+\code{STAGE} & \code{after_one} & 使用已完成未知态/高阻态（x/z）、全0和全1清洗的矩阵。 \\
+\code{OFFSETS} & \code{12,11,10,9,8,7,6} & 时间窗口（time-window）偏移列表。 \\
+\code{DATA_TYPES} & \code{tog,level} & 输入数据类型。 \\
+\code{TEST_COUNT} & \code{1} & 测试用例（case）数量。 \\
+\code{SAMPLE_ROWS_PER_FILE} & \code{0} & 每文件采样行数；0表示不启用。 \\
+\code{SAMPLE_BINS} & \code{20} & 功耗分层采样分箱数（power stratified sampling bins）。 \\
+\code{SAMPLE_SEED} & \code{108} & 采样随机种子。 \\
+\bottomrule
+\end{longtable}
+
+执行独立步骤1（Step1）封装脚本（wrapper）：
+
+\begin{lstlisting}
+cd "${PACKAGE_ROOT}"
+
+PYTHON="${PYTHON}" \
+LEVEL_DIR="${LEVEL_DIR}" \
+TOG_DIR="${TOG_DIR}" \
+LABEL_DIR="${LABEL_DIR}" \
+NAMEFILE="${NAMEFILE}" \
+OUTPUT_ROOT="${OUTPUT_ROOT}" \
+STAGE=after_one \
+OFFSETS=12,11,10,9,8,7,6 \
+DATA_TYPES=tog,level \
+csh cmd/run_timewindow_step1_prepare.csh gemmini
+\end{lstlisting}
+
+\textbf{检查结果：}
+
+\begin{lstlisting}
+${OUTPUT_ROOT}/step1_shifted/timewindow_manifest.json
+\end{lstlisting}
+
+存在，且其中每个时间偏移量/数据类型组合（offset/data type）的特征/标签文件列表（feature/label filelist）可读取、样本数一致。
+
+\section{步骤2（Step2）：极小极大凹惩罚（MCP）分组合代理抽取}
+
+使用真实极小极大凹惩罚（MCP）路径前检查：
+
+\begin{lstlisting}
+"${PYTHON}" -c "import skglm; print(skglm.__file__)"
+\end{lstlisting}
+
+主要参数：
+
+\begin{longtable}{L{0.26\textwidth}L{0.16\textwidth}L{0.46\textwidth}}
+\toprule
+变量 & 默认值 & 说明 \\
+\midrule
+\code{ALPHA_MCP} & \code{50.0} & 极小极大凹惩罚（MCP）正则强度。 \\
+\code{GAMMA} & \code{3.0} & 极小极大凹惩罚（MCP）的伽马参数（gamma）。 \\
+\code{ALPHA_L2} & \code{8.0} & 岭回归细化参数（ridge refinement）。 \\
+\code{BATCH_SIZE} & \code{4} & 训练用例文件分批大小（training file batch size）。 \\
+\code{MCP_TOP_K} & \code{200} & 回退路径（fallback）使用的排名靠前若干项（top-K）；真实极小极大凹惩罚（MCP）非零特征数主要由极小极大凹惩罚（MCP）参数决定。 \\
+\code{STEP2_JOBS} & \code{1} & 组合并行工作进程（worker）数。 \\
+\bottomrule
+\end{longtable}
+
+执行：
+
+\begin{lstlisting}
+cd "${PACKAGE_ROOT}"
+
+PYTHON="${PYTHON}" \
+LEVEL_DIR="${LEVEL_DIR}" \
+TOG_DIR="${TOG_DIR}" \
+LABEL_DIR="${LABEL_DIR}" \
+NAMEFILE="${NAMEFILE}" \
+OUTPUT_ROOT="${OUTPUT_ROOT}" \
+ALPHA_MCP=50.0 \
+GAMMA=3.0 \
+ALPHA_L2=8.0 \
+csh cmd/run_timewindow_step2_mcp.csh gemmini
+\end{lstlisting}
+
+\section{阶段输出与验收}
+
+关键输出：
+
+\begin{lstlisting}
+${OUTPUT_ROOT}/step2_mcp/
+  mcp_per_offset_manifest.json
+  <combo>/selected_indices.txt
+  <combo>/selected_feature_names.txt   # 存在名称文件映射（namefile）时
+  ...
+\end{lstlisting}
+
+\textbf{验收要求：}
+
+\begin{enumerate}
+  \item \code{mcp_per_offset_manifest.json} 存在且可解析；
+  \item 预期的时间偏移量/数据类型组合（offset/data type）全部存在；
+  \item 每个 \code{selected_indices.txt} 的索引均在对应步骤1（Step1）特征列范围内；
+  \item 特征名称（feature names）数量与选中索引（selected indices）数量一致；
+  \item 日志能够确认使用真实 \code{skglm.MCPRegression} 还是回退路径（fallback）；
+  \item 代理集合非空，且数量变化能够由极小极大凹惩罚（MCP）参数和数据解释。
+\end{enumerate}
+
+\chapter{代理特征验证算法}
+
+\section{阶段目标}
+
+\textbf{功能描述：}本阶段不继续做新的代理筛选，而是读取阶段二选出的代理索引，按时间偏移量/数据类型组合（offset/data type）提取并拼接代理特征，使用独立极端梯度提升（XGBoost）功耗模型完成训练、预测和指标评估。
+
+\textbf{处理机制：}验证过程通过索引回映、标签对齐、特征拼接和独立训练回答以下问题：
+
+\begin{itemize}
+  \item 极小极大凹惩罚（MCP）索引能否正确映射回步骤1（Step1）特征；
+  \item 不同组合的样本、标签和用例（case）划分是否一致；
+  \item 代理特征能否支撑基本的功耗拟合和泛化；
+  \item 预测是否存在明显的数值异常、错位或数据泄漏迹象。
+\end{itemize}
+
+\section{输入数据规模与内存占用参考}
+
+\textbf{规模口径：}设验证组合数量为 $C$，第 $j$ 个组合的实际代理数量为 $K_j$，则最终模型列数为 $F=\sum_{j=1}^{C}K_j$，不会再乘时间窗口长度。设所有训练/测试用例的总行数为 $R$，代理矩阵平均非零率为 $\rho$，构建分块行数为 $B$。采用32位浮点型数据和32位索引时，全量代理压缩稀疏行（CSR）矩阵及单个构建分块的未压缩有效载荷约为：
+
+\[
+M_{\mathrm{proxy}} \approx 8\rho RF+4(R+1),\qquad
+M_{\mathrm{block}} \approx 8\rho BF+4(B+1)
+\]
+
+标签为32位浮点型数组（float32），约占 $4R$ 字节；每行三列的64位整数元数据约占 $24R$ 字节。构建完成后的精确组合数、列数、行数和分块数记录在 \code{dataset.meta.json}。
+
+\textbf{参考示例（估算）：}假设 $R=1000000$、$C=14$，每个组合实际选择200个代理，则 $F=2800$；再假设 $\rho=10\%$、\code{STEP2_VALIDATION_CHUNK_SIZE=200}。此处“每组合200个代理”只是示例，不表示真实极小极大凹惩罚（MCP）固定选择200个特征。
+
+\begin{longtable}{L{0.34\textwidth}L{0.24\textwidth}L{0.30\textwidth}}
+\toprule
+对象 & 参考占用 & 说明 \\
+\midrule
+稠密32位浮点型矩阵（dense float32 matrix）& 约10.43吉字节（GiB）& 仅用于对比，当前脚本不会构造该全量稠密矩阵。 \\
+代理压缩稀疏行矩阵（proxy CSR matrix）& 约2.09吉字节（GiB）& 未压缩稀疏数组的逻辑占用。 \\
+单个200行构建分块 & 约0.43兆字节（MiB）& 约生成5000个特征分块，另有同数量的标签和元数据文件。 \\
+全量标签与元数据 & 约3.81兆字节（MiB）与22.89兆字节（MiB）& 不含预测逗号分隔值文件（CSV）和评估中间对象。 \\
+\bottomrule
+\end{longtable}
+
+\textbf{内存边界与资源建议：}数据集构造会一次完整加载一个步骤1（Step1）的“用例、组合”稀疏矩阵，再按 $B$ 行选列落盘；因此 \code{STEP2_VALIDATION_CHUNK_SIZE} 只限制组合拼接产生的临时内存，构建阶段的内存峰值不会因减小该参数而低于最大单个源矩阵的解压后占用。训练使用数据迭代器（DataIter）逐块构造训练集和验证集分位数矩阵（QuantileDMatrix），避免在解释器中全量纵向拼接，但两份量化矩阵仍会常驻内存。评估阶段还会一次读取预测数据框（DataFrame）并构造逐周期变化明细。
+
+在最大单个步骤1源矩阵能够容纳的前提下，16至24吉字节（GiB）可作为上述百万行示例的首轮试跑起点，并应根据最大驻留集大小（RSS）再保留30\%至50\%余量。内存不足时，应优先减少样本行数或 \code{STEP2_VALIDATION_COMBOS}，再减小构建分块；减小分块不能降低分位数矩阵（QuantileDMatrix）的总驻留量。\code{max_bin}、树深度、叶节点数和线程数也会影响训练工作区，但当前封装脚本未透传这些参数，需要直接运行训练程序或后续扩展封装入口。
+
+\section{输入要求}
+
+\begin{longtable}{L{0.32\textwidth}L{0.56\textwidth}}
+\toprule
+输入 & 作用 \\
+\midrule
+\code{step1_shifted/timewindow_manifest.json} & 提供训练/测试用例（train/test case）、特征文件、标签文件和组合顺序。 \\
+\code{step2_mcp/mcp_per_offset_manifest.json} & 提供每个组合的已选索引（selected indices）。 \\
+\code{NAMEFILE} & 将选中列恢复为原始信号名称（signal name）。 \\
+\code{STEP2_VALIDATION_COMBOS} & 指定验证组合及拼接顺序。 \\
+\code{STEP2_VALIDATION_CHUNK_SIZE} & 控制验证数据集构造的分块行数，默认200。 \\
+\bottomrule
+\end{longtable}
+
+执行前检查：
+
+\begin{lstlisting}
+test -f "${OUTPUT_ROOT}/step1_shifted/timewindow_manifest.json"
+test -f "${OUTPUT_ROOT}/step2_mcp/mcp_per_offset_manifest.json"
+test -f "${NAMEFILE}"
+\end{lstlisting}
+
+\section{启动命令}
+
+验证当前 \code{OUTPUT_ROOT} 下的默认极小极大凹惩罚（MCP）清单（manifest）：
+
+\begin{lstlisting}
+cd "${PACKAGE_ROOT}"
+
+PYTHON="${PYTHON}" \
+LEVEL_DIR="${LEVEL_DIR}" \
+TOG_DIR="${TOG_DIR}" \
+LABEL_DIR="${LABEL_DIR}" \
+NAMEFILE="${NAMEFILE}" \
+OUTPUT_ROOT="${OUTPUT_ROOT}" \
+STEP2_VALIDATION_CHUNK_SIZE=200 \
+csh cmd/run_timewindow_step2_validation.csh gemmini
+\end{lstlisting}
+
+验证显式指定的代理清单（proxy manifest）：
+
+\begin{lstlisting}
+csh cmd/run_timewindow_step2_validation.csh gemmini \
+  /path/to/mcp_per_offset_manifest.json
+\end{lstlisting}
+
+如果只验证部分组合，应保持组合名称和拼接顺序与清单（manifest）一致：
+
+\begin{lstlisting}
+STEP2_VALIDATION_COMBOS=tog_offset12,level_offset12 \
+csh cmd/run_timewindow_step2_validation.csh gemmini
+\end{lstlisting}
+
+\section{验证处理过程}
+
+\begin{enumerate}
+  \item 读取时间窗口清单（time-window manifest）与极小极大凹惩罚代理清单（MCP proxy manifest）；
+  \item 对每个组合读取已选索引（selected indices），并校验索引范围；
+  \item 按相同用例/文件主干名（case/stem）对齐标签，横向拼接代理特征；
+  \item 分块写入验证数据集缓存（dataset cache），避免一次性合并完整稀疏矩阵；
+  \item 使用独立极端梯度提升（XGBoost）模型训练和预测；
+  \item 计算总体、数据划分和文件粒度（overall/split/file）的均方根误差（RMSE）、归一化均方根误差（NRMSE）、平均绝对百分比误差（MAPE）、决定系数（$R^2$）和误差分位数；
+  \item 输出逐样本预测、指标汇总和诊断图。
+\end{enumerate}
+
+\section{阶段输出}
+
+\begin{lstlisting}
+${OUTPUT_ROOT}/step2_validation_legacy_xgb/
+  dataset_cache/
+    dataset.meta.json
+    chunks/
+  legacy_xgb_validation/
+    tile_reset_domain-bc6/
+      result/                     # 模型、特征名、特征重要性（importance）
+      eval/
+        evaluation_summary.json  # 核心验收文件
+        ...                       # 预测文件（CSV）、指标和图
+\end{lstlisting}
+
+独立封装脚本（wrapper）以 \code{evaluation_summary.json} 是否生成作为成功条件；主流水线（pipeline）运行时还会维护本阶段的 \code{complete}、\code{failed} 和 \code{status} 文件。
+
+\section{合理性判定}
+
+极端梯度提升（XGBoost）验证通过至少应满足：
+
+\begin{enumerate}
+  \item 数据集构造、索引映射和标签一致性检查全部通过；
+  \item 训练和预测过程中没有非数值/无穷大（NaN/Inf）、空数据集或列越界；
+  \item \code{evaluation_summary.json}、预测逗号分隔值文件（CSV）和模型产物完整；
+  \item 训练/验证/测试划分（train/validation/test）符合清单（manifest），不存在用例（case）交叉污染；
+  \item 均方根误差（RMSE）、归一化均方根误差（NRMSE）、平均绝对百分比误差（MAPE）和决定系数（$R^2$）与同数据集基线或项目验收阈值比较后处于合理范围；
+  \item 逐文件指标没有少数用例（case）极端恶化，预测曲线能跟随真实功耗的主要变化趋势。
+\end{enumerate}
+
+\important{“验证程序成功结束”只说明数据接口和模型训练闭环成立，不等于代理特征在业务上必然合理。指标阈值应由同数据集基线、全特征模型或已发布模型确定，不应在环境指南中任意硬编码。}
+
+
+\chapter{电压降风险标签算法与拟定接口}
+
+本附录补充第三章中的电压降风险标签计划接口。仓库当前尚未实现报告解析、实例到分块映射和0/1风险矩阵生成脚本，以下文件名、参数及输出结构用于约定后续实现。
+
+\section{拟定输入}
+
+\begin{itemize}
+  \item \code{report_manifest.csv}：至少包含 \code{case_id}、\code{cycle_id} 和 \code{report_path}，每条记录唯一对应一个测试用例的一个采样周期；
+  \item 逐周期电压降报告：至少包含实例名称和电压降值，并明确数值单位；
+  \item \code{instance_tile_map.tsv}：至少包含 \code{instance} 和 \code{tile_id}，固定实例到分块的映射；
+  \item \code{tile_thresholds.tsv}：至少包含 \code{tile_id}、\code{risk_threshold} 和 \code{unit}，给出各分块的二值风险阈值；
+  \item 与特征矩阵一致的用例列表、周期基准、采样间隔和首周期处理规则。
+\end{itemize}
+
+\section{标签构造算法}
+
+对每个用例，脚本先按照周期读取实例级报告，再连接实例到分块映射。设周期为 $c$、分块为 $t$，映射到该分块的实例集合为 $I_t$，分块电压降定义为
+
+\[
+D_{c,t}=\max_{i\in I_t}\mathrm{IRDrop}_{c,i}.
+\]
+
+给定分块风险阈值 $V_{\mathrm{risk},t}$，二值风险标签定义为
+
+\[
+R_{c,t}=\begin{cases}
+1, & D_{c,t}\ge V_{\mathrm{risk},t},\\
+0, & D_{c,t}<V_{\mathrm{risk},t}.
+\end{cases}
+\]
+
+实施前必须确认电压降值与阈值使用相同单位。缺少报告、实例未映射或分块内无有效实例时，输出位置使用0作为传输占位值，同时在 \code{valid_mask} 中标记为无效；该占位值不得解释为低风险，也不得参与训练或指标统计。
+
+\section{拟定脚本与输出}
+
+计划新增以下入口：
+
+\begin{lstlisting}
+src/irdrop/convert_instance_reports_to_tile_risk.py
+cmd/run_irdrop_label_pipeline.csh
+\end{lstlisting}
+
+Python 脚本的拟定命令和参数说明见第三章。建议输出结构如下：
+
+\begin{lstlisting}
+ir_drop_labels/
+  manifest.json
+  tile_index.tsv
+  instance_tile_map.tsv
+  risk_matrix/
+    <case>.npy
+  valid_mask/
+    <case>.npy
+  cycle_index/
+    <case>.npy
+  per_tile/
+    <tile_id>/
+      <case>.npy
+\end{lstlisting}
+
+\code{risk_matrix/<case>.npy} 和 \code{valid_mask/<case>.npy} 的形状均为“周期数乘分块数”，风险矩阵采用 \code{uint8} 并且只允许包含0和1；\code{cycle_index/<case>.npy} 保存与特征矩阵对齐的周期编号；\code{per_tile} 提供现有单目标训练流程可读取的单列标签视图。所有用例必须共享 \code{tile_index.tsv} 中的分块顺序。
+
+\code{manifest.json} 至少应记录源报告清单、映射文件、阈值文件及其校验信息，周期起止与采样规则，电压降和阈值单位，矩阵形状与数据类型，以及实例映射覆盖率、缺测周期数、无效标签数和异常值数。
+
+\section{输出验收与待确认项}
+
+\begin{enumerate}
+  \item 每个“用例、周期、实例”组合唯一，或具有明确且可审计的重复记录处理规则；
+  \item 实例映射覆盖率和未映射实例列表可审计，各用例使用相同的分块顺序；
+  \item 周期数、周期索引和首周期处理与对应特征矩阵完全一致；
+  \item 风险矩阵的数据类型为 \code{uint8}，取值集合为 $\{0,1\}$，无效位置均由 \code{valid_mask} 标记；
+  \item 抽查若干周期和分块，结果可由原始实例报告、映射关系和风险阈值重新计算；
+  \item 输出不存在未解释的 NaN 或 Inf，标签行数与特征矩阵行数一致。
+\end{enumerate}
+
+正式实现前仍需由物理设计侧确认报告字段、时间和电压单位、实例层级命名、跨分块实例处理、电源域与供电轨、风险阈值来源、缺测规则以及项目验收标准。
+
+\chapter{端到端运行与验收}
+
+本章说明当前已经实现的功耗标签（power label）三阶段主链路。逐周期电压降（IR-drop）扩展在对应脚本完成前不纳入默认通过条件。
+
+\section{推荐执行顺序}
+
+\begin{enumerate}
+  \item 配置并运行 \code{run_fsdb_pipeline.csh}；
+  \item 固化阶段一的电平/翻转特征（level/TOG）、标签（label）文件和信号名称文件（namefile）路径；
+  \item 在新的 \code{OUTPUT_ROOT} 中运行 \code{run_timewindow_step1_prepare.csh}；
+  \item 运行 \code{run_timewindow_step2_mcp.csh}；
+  \item 检查极小极大凹惩罚（MCP）清单（manifest）和已选索引（selected indices）；
+  \item 运行 \code{run_timewindow_step2_validation.csh}；
+  \item 归档三阶段配置、日志、清单（manifest）和验证指标。
+\end{enumerate}
+
+\section{端到端验收清单}
+
+\begin{longtable}{L{0.18\textwidth}L{0.27\textwidth}L{0.43\textwidth}}
+\toprule
+阶段 & 验收文件 & 通过条件 \\
+\midrule
+快速信号数据库导出（FSDB export）& \code{HW_reduced/complete} & 电平/翻转特征（level/TOG）、信号名称文件（namefile）和清洗元数据完整。 \\
+功耗标签提取 & \code{HW_power/complete} & 每个用例（case）的数组标签文件（NPY）与特征时间窗口对应。 \\
+时间窗口（time-window）& \code{timewindow_manifest.json} & 所有组合、用例（case）和文件列表可读取。 \\
+极小极大凹惩罚（MCP）抽取 & \code{mcp_per_offset_manifest.json} & 组合齐全、索引有效、代理集合非空。 \\
+极端梯度提升（XGBoost）验证 & \code{evaluation_summary.json} & 数据构造、训练和指标输出成功，指标通过项目阈值。 \\
+可追溯性 & 配置和日志归档 & 能还原运行环境（Python environment）、输入路径、阶段（stage）、时间偏移量（offset）、极小极大凹惩罚（MCP）参数和组合顺序。 \\
+\bottomrule
+\end{longtable}
+
+\section{输出目录隔离}
+
+阶段一和阶段二、三分别使用 \code{OUTPUT_BASE} 与 \code{OUTPUT_ROOT}。推荐每次实验新建运行目录，不复用其他参数组合的清单（manifest）、缓冲文件（buffer）或完成标志（\code{complete}）。
+
+\begin{lstlisting}
+/data/output/fsdb_pipeline/         # 阶段一长期数据产物
+  gemmini_reduced/
+  gemmini_power/
+
+/data/output/proxy_runs/            # 阶段二、三实验目录
+  gemmini_after_one_20260822_001/
+  gemmini_after_one_20260822_002/
+\end{lstlisting}
+
+\chapter{常见问题}
+
+\section{阶段一常见问题}
+
+\begin{longtable}{L{0.28\textwidth}L{0.60\textwidth}}
+\toprule
+现象 & 排查与处理 \\
+\midrule
+动态库提示 \code{not found} & 使用 \code{ldd} 检查，优先以正确 \code{VERDI_HOME} 重新编译。 \\
+许可证失败（license failure）& 检查站点许可证（license）变量、连通性和授权；敏感地址不提交仓库。 \\
+标签长度不一致 & 核对起止位置（start/end）、\code{STEP}、\code{DROP_FIRST} 和工作负载（workload）名称。 \\
+清洗后列数异常 & 检查信号前缀（signal prefix）、未知态/高阻态（x/z）统计、全0/全1统计及原始信号范围。 \\
+磁盘或内存不足 & 调整 \code{MAX_MEM}、分片大小和批处理提交命令（bsub）资源。 \\
+\bottomrule
+\end{longtable}
+
+\section{阶段二常见问题}
+
+\begin{longtable}{L{0.28\textwidth}L{0.60\textwidth}}
+\toprule
+现象 & 排查与处理 \\
+\midrule
+缺少步骤1（Step1）清单（manifest）& 确认四个输入目录和 \code{OUTPUT_ROOT}，先运行步骤1（Step1）封装脚本（wrapper）。 \\
+极小极大凹惩罚（MCP）进入回退路径（fallback）& 使用目标解释器（\code{PYTHON}）检查 \code{skglm}，记录实际选择器后再决定是否继续。 \\
+选中索引越界（selected indices out of range）& 检查信号名称文件（namefile）、阶段（stage）与特征矩阵（feature matrix）是否来自同一运行批次（run）。 \\
+代理集合为空 & 检查数据方差、标签对齐以及正则参数（alpha/gamma），不直接进入阶段三。 \\
+旧结果被跳过 & 封装脚本（wrapper）发现清单（manifest）已存在会跳过；配置变化时使用新的 \code{OUTPUT_ROOT}。 \\
+\bottomrule
+\end{longtable}
+
+\section{阶段三常见问题}
+
+\begin{longtable}{L{0.28\textwidth}L{0.60\textwidth}}
+\toprule
+现象 & 排查与处理 \\
+\midrule
+缺少代理清单（proxy manifest）& 确认阶段二成功，或把正确清单（manifest）作为第二个位置参数传入。 \\
+数据集拼接失败 & 检查组合名称、用例/文件主干名（case/stem）、标签一致性和选中索引（selected indices）。 \\
+已有验证汇总文件导致跳过 & 封装脚本（wrapper）检测到汇总文件后会跳过；新验证使用新的 \code{OUTPUT_ROOT}。 \\
+指标异常恶化 & 按文件/数据划分（file/split）检查错位、数据泄漏、代理数量和异常用例（case）。 \\
+训练内存不足 & 减少验证组合或降低 \code{STEP2_VALIDATION_CHUNK_SIZE}，并调整任务资源。 \\
+\bottomrule
+\end{longtable}
+
+\chapter{命令速查}
+
+\section{阶段一}
+
+\begin{lstlisting}
+cd /path/to/xgboost_timewindow
+csh cmd/run_fsdb_pipeline.csh gemmini
+\end{lstlisting}
+
+\section{阶段二}
+
+\begin{lstlisting}
+PYTHON=/path/to/python \
+LEVEL_DIR=/path/to/level \
+TOG_DIR=/path/to/tog \
+LABEL_DIR=/path/to/power \
+NAMEFILE=/path/to/level/after_one.namefile.txt \
+OUTPUT_ROOT=/path/to/proxy_run \
+csh cmd/run_timewindow_step1_prepare.csh gemmini
+
+PYTHON=/path/to/python \
+LEVEL_DIR=/path/to/level \
+TOG_DIR=/path/to/tog \
+LABEL_DIR=/path/to/power \
+NAMEFILE=/path/to/level/after_one.namefile.txt \
+OUTPUT_ROOT=/path/to/proxy_run \
+csh cmd/run_timewindow_step2_mcp.csh gemmini
+\end{lstlisting}
+
+\section{阶段三}
+
+\begin{lstlisting}
+PYTHON=/path/to/python \
+LEVEL_DIR=/path/to/level \
+TOG_DIR=/path/to/tog \
+LABEL_DIR=/path/to/power \
+NAMEFILE=/path/to/level/after_one.namefile.txt \
+OUTPUT_ROOT=/path/to/proxy_run \
+csh cmd/run_timewindow_step2_validation.csh gemmini
+\end{lstlisting}
+
+\chapter{相关文档}
+
+\begin{longtable}{L{0.36\textwidth}L{0.52\textwidth}}
+\toprule
+文档 & 内容 \\
+\midrule
+\code{docs/timewindow_training_workflow.md} & 时间窗口训练步骤1至步骤6（time-window training Step1--Step6）、训练参数、数据形状（shape）和正式训练配置。 \\
+\code{src/fsdbapi/fsdbapi_Instruction.md} & 快速信号数据库应用程序编程接口（FSDB API）编译、内部应用程序编程接口（API）、文件格式和单步使用方法。 \\
+\code{docs/latex_build/proxy_selection_algorithm.tex} & 极小极大凹惩罚（MCP）与极端梯度提升（XGBoost）代理（proxy）的算法和实现说明。 \\
+\bottomrule
+\end{longtable}
+
+\end{document}

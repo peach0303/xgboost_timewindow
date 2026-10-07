@@ -1,0 +1,58 @@
+# Python caches and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments and local environment files
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# LaTeX intermediate files
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.thm
+*.toc
+*.xdv
+
+# Generated document build workspace
+docs/latex_build/
+
+# Packaged snapshots and archives
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.sha256
+
+# Heavy EDA/data artifacts and generated training outputs
+*.fsdb
+*.vcd
+*.vpd
+*.saif
+*.spef
+*.sdf
+*.db
+*.ddc
+*.npz
+*.npy
+*.buffer
+*.joblib
+output/
+runs/
+work/
+deliveries/
+
+# Editor and OS metadata
+.idea/
+.vscode/
+*.swp
+.DS_Store

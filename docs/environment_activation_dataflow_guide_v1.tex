@@ -1,0 +1,379 @@
+% !TeX program = XeLaTeX
+% !TeX encoding = UTF-8
+% V2.2: 保留数据流框架，恢复初版工程技术手册风格，并增加 IR-drop 拟定支路。
+
+\makeatletter
+\def\input@path{{docs/latex_build/}{latex_build/}}
+\makeatother
+\documentclass{fduthesis}
+
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{url}
+\usepackage{graphicx}
+\usepackage{tikz}
+\usepackage{etoolbox}
+\usetikzlibrary{arrows.meta,positioning}
+\let\cleardoublepage\clearpage
+
+% All tables use one Chinese font size below the five-size body text.
+% Bind Latin and CJK families separately so mixed-language cells stay aligned.
+\newfontfamily\tablelatinfont{lmroman10-regular.otf}[
+  BoldFont=lmroman10-bold.otf,
+  ItalicFont=lmroman10-italic.otf,
+  BoldItalicFont=lmroman10-bolditalic.otf
+]
+\newCJKfontfamily\tablecjkfont{FandolSong-Regular.otf}[
+  BoldFont=FandolSong-Bold.otf
+]
+\AtBeginEnvironment{tabular}{\zihao{-5}\tablelatinfont\tablecjkfont}
+\AtBeginEnvironment{longtable}{\zihao{-5}\tablelatinfont\tablecjkfont}
+
+\newfontfamily\listinglatinfont{lmmono10-regular.otf}[
+  ItalicFont=lmmono10-italic.otf,
+  BoldFont=lmmono10-regular.otf,
+  BoldFeatures={FakeBold=1.5},
+  BoldItalicFont=lmmono10-italic.otf,
+  BoldItalicFeatures={FakeBold=1.5}
+]
+\newCJKfontfamily\listingcjkfont{FandolFang-Regular.otf}
+\lstdefinestyle{shellstyle}{
+  basicstyle=\listinglatinfont\listingcjkfont\zihao{-5},
+  upquote=true,
+  literate={-}{{\char"002D}}1,
+  showspaces=false,
+  showstringspaces=false,
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  frame=single,
+  framerule=0.3pt,
+  rulecolor=\color{black!25},
+  backgroundcolor=\color{black!3}
+}
+\lstset{style=shellstyle}
+
+\newcommand{\code}[1]{{\ttfamily\urlstyle{tt}\path{#1}}}
+\newcommand{\smallcode}[1]{{\ttfamily\footnotesize\detokenize{#1}}}
+\newcommand{\tablecode}[1]{{\ttfamily\detokenize{#1}}}
+\newcommand{\envdir}{{\ttfamily\small\{env\_dir\}}}
+\newcommand{\important}[1]{\par\medskip\noindent\textbf{注意：}#1\par\medskip}
+
+\fdusetup{
+  style = {
+    font-size = 5,
+    fullwidth-stop = false,
+    font = lm,
+    cjk-font = fandol,
+    auto-make-cover = false,
+  },
+  info = {
+    title = {代理筛选环境启用与数据处理指南},
+    title* = {Environment Activation and Data Processing Guide for xgboost\_timewindow},
+    author = {陈一恒},
+    supervisor = { },
+    major = { },
+    degree = academic,
+    department = { },
+    student-id = { },
+    keywords = {XGBoost, time-window, MCP, FSDB, IR-drop},
+    keywords* = {XGBoost, time-window, MCP, FSDB, IR-drop},
+    clc = {TP000}
+  }
+}
+
+% Keep Latin text consistent across body text, headings, diagrams, and code.
+\renewcommand{\sfdefault}{\rmdefault}
+\renewcommand{\ttdefault}{\rmdefault}
+
+\begin{document}
+
+\frontmatter
+\begin{titlepage}
+  \centering
+  \vspace*{2.5cm}
+  {\zihao{2}\bfseries 环境启用与数据处理指南\par}
+  \vfill
+  {\zihao{-5}
+  \renewcommand{\arraystretch}{1.5}
+  \begin{tabular}{|L{0.12\textwidth}|L{0.40\textwidth}|L{0.14\textwidth}|L{0.14\textwidth}|}
+    \hline
+    版本 & 修改点 & 作者 & 工号 \\
+    \hline
+    V1.0 & 初版文档撰写 & 陈怡恒 & cWX1501401 \\
+    \hline
+    \rule{0pt}{2.2em} & & & \\
+    \hline
+    \rule{0pt}{2.2em} & & & \\
+    \hline
+    \rule{0pt}{2.2em} & & & \\
+    \hline
+  \end{tabular}\par}
+  \vspace{1.5cm}
+  {\zihao{4}\today\par}
+\end{titlepage}
+\tableofcontents
+
+\chapter*{缩略词表}
+\begingroup
+\zihao{-5}
+\renewcommand{\arraystretch}{1.10}
+\begin{longtable}{L{0.24\textwidth}L{0.30\textwidth}L{0.34\textwidth}}
+\toprule
+缩略词 & 英文全称或原文 & 中文含义 \\
+\midrule
+FSDB & Fast Signal Database & 快速信号数据库，一种波形文件格式 \\
+HW & Hardware & 区分不同硬件的数据集标签 \\
+IR-drop & Current-resistance voltage drop (\(I \times R\) drop) & 电流流经互连电阻所引起的电压降 \\
+MAPE & Mean Absolute Percentage Error & 平均绝对百分比误差 \\
+MCP & Minimax Concave Penalty & 极小极大凹惩罚，一种稀疏特征选择方法 \\
+NPZ & NumPy zipped archive & NumPy 压缩归档格式 \\
+NRMSE & Normalized Root Mean Squared Error & 归一化均方根误差 \\
+PTPX & Synopsys PrimeTime PX & Synopsys PrimeTime PX 功耗分析工具 \\
+RTL & Register-Transfer Level & 寄存器传输级 \\
+XGBoost & eXtreme Gradient Boosting & 极端梯度提升算法 \\
+\midrule
+\multicolumn{3}{l}{\textbf{脚本环境变量}} \\
+\midrule
+\tablecode{CONDA_ENV_ROOT} & Conda Environment Root & Conda 环境的根目录 \\
+\tablecode{DSUB_CMD} & Job Submission Command & 作业提交命令或可执行程序路径 \\
+\tablecode{FSDB_DIR} & FSDB Directory & FSDB 输入文件所在目录 \\
+\tablecode{LABEL_DIR} & Label Directory & 标签文件所在目录 \\
+\tablecode{LD_LIBRARY_PATH} & Dynamic Library Search Path & 动态链接库搜索路径 \\
+\tablecode{LEVEL_DIR} & Level Feature Directory & 电平特征文件所在目录 \\
+\tablecode{MERGED_DIR} & Merged Cache Directory & 合并后特征缓存的输出目录 \\
+\tablecode{NAMEFILE} & Feature Name File & 特征名称文件的路径 \\
+\tablecode{OUTPUT_BASE} & Output Base Directory & 数据处理结果的输出根目录 \\
+\tablecode{OUTPUT_ROOT} & Output Root Directory & 时间窗口处理结果的输出根目录 \\
+\tablecode{PACKAGE_ROOT} & Package Root Directory & 项目软件包的根目录 \\
+\tablecode{POWER_BIN} & Power-label Converter Binary & 功耗标签转换程序的可执行文件路径 \\
+\tablecode{POWER_DIR} & Power Label Directory & 功耗标签及其中间文件所在目录 \\
+\tablecode{PYTHON} & Python Interpreter Path & 指定使用的 Python 解释器路径 \\
+\tablecode{REDUCE_DIR} & Reduced Feature Directory & 无效信息剔除结果的输出目录 \\
+\tablecode{REDUCTION_BASE} & Reduction Result Base Directory & 特征降维结果的根目录 \\
+\tablecode{TIMEWINDOW_SRC} & Time-window Source Directory & 时间窗口处理程序的源码目录 \\
+\tablecode{TOG_DIR} & Toggle Feature Directory & 翻转特征文件所在目录 \\
+\tablecode{TOOLS_ROOT} & Tools Root Directory & 数据处理工具及脚本的根目录 \\
+\tablecode{VERDI_HOME} & Verdi Installation Root & Verdi 软件的安装根目录 \\
+\tablecode{WORK_DIR} & Working Directory & 数据处理流程的工作目录 \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\mainmatter
+
+\chapter{编写目的与使用范围}
+
+本文档用于说明数据处理与模型训练过程所需依赖环境的搭建方法，并给出从原始数据到训练数据集的提取边界。
+完成部署后，使用者应能够运行快速信号数据库（Fast Signal Database，FSDB）格式转换程序，生成模型所需的特征与标签，并完成代理特征筛选环境的部署。
+
+为兼顾快速使用与细节查阅，正文部分给出必要的环境初始化方法，以及数据集提取和代理筛选快速启动脚本的总体流程与启动方式。
+其他具体的脚本功能、参数定义、输入输出件、使用约束和验收要求等细节在附录中展开。
+代理筛选算法的原理与完整执行流程另见《代理筛选算法说明》。
+
+Gemmini 硬件加速器平台的生成、仿真与部署可参考 Chipyard 官方文档，本文档不重复介绍相关硬件工具链。
+项目后端环境基于华为 Dophis 平台搭建，相关技术资料已较为完善，本文档不再展开说明。
+
+本文档仅适用于功耗预测任务与电压降风险预测任务中，数据处理与模型训练环境准备阶段，内容包括：
+\begin{itemize}
+  \item FSDB格式转换所需的动态链接库、编译工具和 Python 环境；
+  \item 时间窗口样本构造、MCP/XGBoost 代理筛选所需的 Python 环境；
+  \item 电平/翻转特征矩阵、功耗标签及电压降风险标签的数据提取与构造流程。
+\end{itemize}
+本文不涉及 Gemmini 硬件加速器平台部署、Chipyard 工具链安装及华为 Dophis 平台初始化，也不展开模型训练、超参数优化和后端物理设计等流程。
+受数据集构建进度限制，电压降风险标签转换目前仍处于接口与算法设计阶段，尚未形成经过完整验证的处理流程。
+
+\chapter{环境部署}
+
+本章说明首次运行前必须具备的两套环境。路径示例均需替换为目标机器上的实际绝对路径，
+批处理脚本建议显式传入 \code{PYTHON}，避免登录环境与计算节点解释器不一致。
+
+\section{FSDB格式转换环境部署}
+
+FSDB 格式转换同时依赖 FsdbReader 动态链接库、C++ 编译环境和 Python 数据处理环境。
+
+\subsection{动态链接库与编译环境}
+
+目标机器应提供支持 C++17 的 \code{g++}、\code{make}，
+以及可用的 Verdi 2018.09sp2/FsdbReader 安装和配套许可证环境。设置软件包根目录并编译：
+
+\begin{lstlisting}
+export PACKAGE_ROOT=/path/to/xgboost_timewindow
+cd "${PACKAGE_ROOT}/src/fsdbapi"
+
+# 使用工程内置 FsdbReader 配置
+make
+
+# 或显式指定站点 Verdi
+make VERDI_HOME=/path/to/verdi/2018.09sp2
+\end{lstlisting}
+
+编译后确认两个转换程序存在，且不存在未解析的动态库：
+
+\begin{lstlisting}
+test -x build/fsdb_to_tog_cache
+test -x build/fsdb_to_power_label
+ldd build/fsdb_to_tog_cache | grep 'not found'
+\end{lstlisting}
+
+最后一条命令应无输出。还应选取一个实际 FSDB 文件执行最小读取测试，以同时验证动态库版本、FSDB 文件格式和许可证环境。
+
+\subsection{Python环境}
+
+格式转换后的缓存合并、数组转换和特征清洗至少需要 \code{numpy}、\code{scipy} 与 \code{pandas}库，
+项目交付文件中附带已经验证的 Conda 环境压缩包 \code{pro.tar.gz}。
+环境初始化时，将该文件解压到指定目录并修正环境前缀即可使用，无需重新安装 Python 及相关依赖。
+
+\begin{lstlisting}
+# 将交付文件 pro.tar.gz 解压到指定位置
+mkdir -p /path/to/conda/envs/pro
+tar -xzf /path/to/delivery/pro.tar.gz -C /path/to/conda/envs/pro
+
+# 激活环境并修正打包前缀
+source /path/to/conda/envs/pro/bin/activate
+conda-unpack
+
+export CONDA_ENV_ROOT=/path/to/conda/envs/pro
+export PYTHON=${CONDA_ENV_ROOT}/bin/python
+"${PYTHON}" --version
+\end{lstlisting}
+
+后续批处理任务可不激活交互式 Conda 环境，但必须显式设置 \code{PYTHON}，确保计算节点使用上述交付环境中的解释器。
+
+\section{代理筛选环境部署}
+
+交付文件中的 \code{pro.tar.gz} 已包含代理筛选与验证所需
+的 \code{numpy}、\code{scipy}、\code{pandas}、\code{scikit-learn}、\code{xgboost}、
+\code{optuna}、\code{matplotlib}、\code{joblib} 和 \code{skglm} 等依赖，无需另行安装。
+按照 2.1.2 节完成解压和前缀修正后，激活 \code{pro} 环境并执行以下命令检查环境完整性：
+
+\begin{lstlisting}
+source /path/to/conda/envs/pro/bin/activate
+python -m pip check
+
+python - <<'PY'
+import sys
+import numpy, scipy, pandas, sklearn, xgboost, optuna
+import matplotlib, joblib, skglm
+print("python", sys.executable)
+print("xgboost", xgboost.__version__)
+print("skglm", getattr(skglm, "__version__", "unknown"))
+print("proxy selection environment: OK")
+PY
+\end{lstlisting}
+
+\code{python~-m~pip~check}执行完应输出 \code{“No broken requirements found.”}，Python 导入检查应正常结束并打印 
+\code{“proxy selection environment: OK”}。
+若检查失败，应首先确认当前解释器来自已解压的 \code{pro} 环境，并检查是否已执行 \code{conda-unpack}。
+
+\chapter{代理筛选流程快速启动}
+
+\section{数据集提取快速启动}
+
+\code{cmd/run_fsdb_pipeline.csh} 是当前数据集提取阶段的总控入口。该脚本已实现并验证功耗预测任务的数据处理流程：从 RTL FSDB 导出信号电平/翻转信息，从 PTPX 功耗 FSDB 导出功耗标签，随后完成跨用例合并和无效信息剔除。电压降风险预测任务可复用其中的特征导出、缓存合并和无效信息剔除流程，但受项目阶段与数据采集时间限制，电压降报告及标签尚未完整收集，当前尚未形成经过完整验证的端到端流程。因此，本节将现有脚本作为电压降风险预测数据流的可迁移基线，而不将其表述为已经闭环的电压降数据流。
+
+数据集处理采用分阶段组织方式，各阶段通过文件和 manifest 传递结果，特征提取与标签生成相互解耦。迁移到电压降风险预测标签任务时，无需重写 FSDB 特征处理链，只需替换任务相关的标签生成阶段，并保持用例标识、采样行数和时间对齐关系一致。
+
+\textbf{启动命令示例：}
+
+\begin{lstlisting}
+cd /path/to/xgboost_timewindow
+csh cmd/run_fsdb_pipeline.csh gemmini
+\end{lstlisting}
+
+示例中的 \code{gemmini} 传入脚本后会赋值给环境变量\code{HW}，该变量作为一个区分不同硬件的数据集标签，用于后续输出目录、输出文件的路径生成 。脚本依次完成信号过滤、FSDB 特征分块导出、功耗标签导出、
+跨用例缓存合并和无效信息剔除。首次运行前应重点检查下表中的配置。
+
+\begin{longtable}{L{0.20\textwidth}L{0.25\textwidth}L{0.45\textwidth}}
+\toprule
+类别 & 变量或配置 & 检查内容 \tabularnewline
+\midrule
+运行环境 & \code{activate.csh}、\code{LD_LIBRARY_PATH} & 确认 Verdi 2018.09sp2/FsdbReader 动态库和许可证可用，并已激活交付的 \code{pro} 环境。 \tabularnewline
+输入与输出 & \code{FSDB_DIR}、\code{OUTPUT_BASE}、\code{WORK_DIR} & 确认输入路径、输出容量和计算节点访问权限；同名 \code{HW} 会复用固定输出位置。 \tabularnewline
+RTL特征输入 & \code{fsdb_list} & 依次填写用例标识、RTL FSDB、采样起点和终点。用例标识须唯一，且终点大于起点。 \tabularnewline
+功耗标签输入 & \code{power_list} & 依次填写与 \code{fsdb_list} 对应的用例标识、功耗 FSDB 和信号层级；不导出功耗时设为空列表。 \tabularnewline
+采样设置 & \code{STEP}、\code{END_INCL}、\code{DROP_FIRST} & 起点、终点和间隔均使用 FSDB tag，实际物理时间由波形文件的仿真 timescale 决定。 \tabularnewline
+信号与分块 & \code{SIGNAL_PREFIX}、\code{RAW_COL}、\code{MAX_CYCLES_PER_FILE} & 检查层级过滤范围、每个原始信号块的规模和 NPZ 分片行数。 \tabularnewline
+资源与调度 & \code{MAX_MEM}、\code{DSUB_QUEUE}、\code{DSUB_EXTRA_ARGS}、\code{POLL_SEC} & 根据后端调度平台调整队列、内存申请和轮询周期。 \tabularnewline
+\bottomrule
+\end{longtable}
+
+\important{脚本会删除并重建 \code{WORK_DIR/cache_HW}，并清除同名流程的部分 \code{complete/failed} 标志。重新运行前须确认 \code{HW}、\code{WORK_DIR} 和 \code{OUTPUT_BASE} 不会覆盖仍需保留的结果。}
+
+
+完成后至少检查合并特征 manifest、\code{level} 输出目录与 \code{tog}输出目录中的稀疏矩阵、\code{after_one.namefile.txt}、
+标签文件、日志和各级 \code{complete/failed} 标志。当前功耗流程要求同一用例的 Level、Toggle 与功耗标签行数一致。
+迁移到电压降风险任务后，还须检查风险矩阵的样本轴与特征行严格对齐。
+
+\section{代理筛选快速启动}
+
+\code{cmd/run_timewindow_pipeline.csh} 以数据集提取结果为输入，代理筛选流程由两个步骤组成：步骤1 构造时间窗口样本，
+步骤2 分别对各时间偏移和特征类型执行 MCP 或 XGBoost 代理筛选。使用筛选后的代理训练独立 XGBoost 回归模型进行有效性验证，
+以判断代理集合是否保留了足够的功耗预测信息。
+
+\textbf{总控脚本启动示例：}
+
+\begin{lstlisting}
+cd /path/to/xgboost_timewindow
+
+# 启用步骤2 代理有效性验证, 并执行数据准备流程
+setenv RUN_STEP2_VALIDATION 1
+setenv STEP2_VALIDATION_COMBOS "tog_offset12,level_offset12"
+csh cmd/run_timewindow_pipeline.csh gemmini
+\end{lstlisting}
+
+示例命令中gemmini是硬件标识参数，运行前应检查以下配置。
+
+\begin{longtable}{L{0.23\textwidth}L{0.30\textwidth}L{0.35\textwidth}}
+\toprule
+类别 & 变量或配置 & 检查内容 \tabularnewline
+\midrule
+输入目录 & \code{REDUCTION_BASE}、\code{LEVEL_DIR}、\code{TOG_DIR}、\code{LABEL_DIR} & 确认特征和标签来自同一次数据集提取，用例名称、顺序及行数一致。 \tabularnewline
+解释器与源码 & \code{PYTHON}、\code{TIMEWINDOW_SRC} & 确认使用已激活的 \code{pro} 环境，并能访问时间窗口和验证脚本。 \tabularnewline
+特征名称 & \code{STAGE}、\code{NAMEFILE} & 默认使用 \code{after_one.namefile.txt}；名称数量和顺序须与输入矩阵列一致。 \tabularnewline
+时间窗口 & \code{OFFSETS}、\code{DATA_TYPES}、\code{BOUNDARY_DISCARD}、\code{TEST_COUNT} & 核对偏移量、电平/翻转组合、边界丢弃长度和测试用例划分。 \tabularnewline
+代理算法 & \code{PROXY_SELECTOR}、MCP/XGBoost 参数 & \code{mcp} 调用 MCP 筛选，\code{xgb} 或 \code{xgboost} 调用 XGBoost 筛选；只调整所选算法对应的参数。 \tabularnewline
+并行设置 & \code{STEP1_PARALLEL_DSUB}、\code{STEP2_PARALLEL_DSUB}、\code{STEP1_JOBS}、\code{STEP2_JOBS} & 决定是否按用例/组合拆分任务，以及单任务内部并行度。 \tabularnewline
+验证设置 & \code{RUN_STEP2_VALIDATION}、\code{STEP2_VALIDATION_COMBOS}、\code{STEP2_VALIDATION_CHUNK_SIZE} & 分别控制是否验证、参与验证的组合及拼接缓存每块行数。 \tabularnewline
+调度与输出 & \code{OUTPUT_ROOT}、\code{DSUB_CMD}、\code{DSUB_QUEUE}、\code{DSUB_EXTRA_ARGS}、\code{POLL_SEC} & 确认结果目录、队列资源、提交命令和轮询周期。 \tabularnewline
+\bottomrule
+\end{longtable}
+
+代理筛选流程的两个步骤如下：
+
+\begin{longtable}{L{0.12\textwidth}L{0.39\textwidth}L{0.37\textwidth}}
+\toprule
+阶段 & 主要脚本 & 处理目的 \tabularnewline
+\midrule
+步骤1 & \code{step1_make_global_sample_index.py}、\code{step1_prepare_timewindow.py} & 划分训练/测试样本，并按偏移量和数据类型构造时间窗口特征。 \tabularnewline
+步骤2 & \code{step2_mcp_per_offset.py} 或 \code{step2_xgb_per_offset.py}；\code{step2_validation/xgb_power.py} & 对每个时间偏移与特征类型组合执行代理筛选，输出代理列及 manifest；随后重建代理特征并验证功耗预测误差和跳变跟踪能力。 \tabularnewline
+\bottomrule
+\end{longtable}
+
+运行脚本后，流程会自动调用 \code{step1_make_global_sample_index.py} 和 \code{step1_prepare_timewindow.py} 
+完成训练/测试样本划分及时间窗口特征构造。
+随后根据 \code{PROXY_SELECTOR} 调用 \code{step2_mcp_per_offset.py} 或 \code{step2_xgb_per_offset.py}，
+对各时间偏移与特征类型组合分别执行代理筛选。
+启用验证功能时，还会调用 \code{step2_validation/xgb_power.py}，读取时间窗口清单和代理清单，重建该组合对应的代理特征，
+并训练独立的 XGBoost 回归模型进行初步验证。
+
+
+代理筛选结果保存在 \code{step2_mcp/mcp_per_offset_manifest.json} 或 
+\code{step2_xgb_proxy/mcp_per_offset_manifest.json} 中，各组合的代理索引由其中的 \code{selected_indices_file} 给出。
+验证程序按 \code{<hpotag>/<target>-bc<before_cycles>/} 动态生成结果目录，并在其 \code{eval/} 子目录输出初步评价。
+其中 \code{point_metrics.csv} 给出平均绝对百分比误差（Mean Absolute Percentage Error，MAPE）、
+决定系数（Coefficient of Determination，$R^2$）和归一化均方根误差（Normalized Root Mean Squared Error，NRMSE）等预测指标。
+
+迁移至电压降风险预测任务时，步骤1 需将 \code{LABEL_DIR} 指向与特征对齐的0/1风险标签，
+并将连续功耗标签读取逻辑改为风险矩阵读取逻辑；现有 \code{xgb_power.py} 使用连续值功耗标签和回归目标，
+不能直接作为电压降风险验证程序，必须将标签接口、XGBoost 目标函数和评价指标替换为二分类或多输出风险预测实现。
+由于风险标签及空间映射尚未完成验证，上述内容仅说明流程的可迁移边界，不代表当前完整可执行的电压降代理筛选流程。
+
+\appendix
+
+\input{docs/environment_activation_dataflow_appendices.tex}
+\end{document}

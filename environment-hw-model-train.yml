@@ -1,0 +1,21 @@
+name: hw-model-train
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pytorch=2.5.1
+  - pytorch-cuda=12.4
+  - numpy
+  - scipy
+  - pandas
+  - scikit-learn
+  - xgboost
+  - optuna
+  - matplotlib
+  - joblib
+  - skglm
+  - pytest
+  - conda-pack
+  - pip
